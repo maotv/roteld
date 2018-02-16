@@ -12,20 +12,21 @@ extern crate serde_derive;
 extern crate serde_json;
 
 
-use ws::{connect, Handler, Handshake, Result, Message, CloseCode};
+use ws::{Handler, Handshake, Result, Message};
 use ws::Error as WsError;
 
-use serde_json::{Value, Error};
+use serde_json::Value;
 
 
 use std::thread;
-use std::time::Duration;
 use std::io::{self, Read, Write};
 
 use std::sync::mpsc;
 use std::sync::mpsc::{Sender,Receiver,TryRecvError};
 
 use std::sync::atomic::{AtomicBool, Ordering, ATOMIC_BOOL_INIT};
+use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 // use std::sync::mpsc::{Sender,Receiver};
 
@@ -43,10 +44,10 @@ use std::os::unix::prelude::*;
 
 use std::path::Path;
 
-const EMPTY: &'static str = "";
+// const EMPTY: &'static str = "";
 
 const ROTEL_VOLUME_MIN: i64 = 1;
-const ROTEL_VOLUME_MAX: i64 = 42;
+const ROTEL_VOLUME_MAX: i64 = 64;
 
 const VOLUMIO_VOLUME_MIN: i64 = 0;
 const VOLUMIO_VOLUME_MAX: i64 = 100;
@@ -62,7 +63,8 @@ const STATE_NCHARS:  usize = 3;
 const STATE_READEOL: usize = 4;
 const STATE_DONE:    usize = 5;
 
-static rotel_is_adjusting2: AtomicBool = ATOMIC_BOOL_INIT;
+static rotel_is_adjusting_value: AtomicBool = ATOMIC_BOOL_INIT;
+static rotel_knob_timestamp_value: AtomicUsize = ATOMIC_USIZE_INIT;
 
 enum RotelCommand {
     Target(i64),
@@ -75,6 +77,7 @@ enum RotelCommand {
 // }
 
 #[derive(Serialize, Deserialize)]
+#[serde(default = "VolumioState::default")]
 struct VolumioState {
 
     status: String,
@@ -102,6 +105,45 @@ struct VolumioState {
 
 }
 
+impl VolumioState {
+
+    fn default() -> VolumioState {
+        VolumioState {
+            status: String::from(""),
+            position: 0,
+            title: String::from(""),
+            artist: String::from(""),
+            album: String::from(""),
+            albumart: String::from(""),
+            trackType: String::from(""),
+            seek: 0,
+            duration: 0,
+            samplerate: String::from(""),
+            bitdepth: String::from(""),
+            channels: 0,
+            random: Value::Bool(false),
+            repeat: Value::Bool(false),
+            repeatSingle: false,
+            consume: false,
+            volume: 0,
+            mute: false,
+            stream: String::from(""),
+            updatedb: false,
+            volatile: false,
+            service: String::from(""),
+        }
+    }
+
+
+}
+
+
+
+
+struct RotelState {
+
+    power: bool,
+}
 
 // impl VolumioState {
 
@@ -164,7 +206,8 @@ impl UnitResponse {
 enum Event {
 
     Rotel(UnitResponse),
-    Volumio(VolumioState),
+//    Volumio(VolumioState),
+    Volumio(Value),
     WsConnect(ws::Sender),
     WsPing
 
@@ -213,31 +256,47 @@ impl Handler for WsClient {
         if jstr.starts_with("42[") {
 
             let mut state: Value = serde_json::from_str(&jstr[2..]).unwrap();
-            // println!("Got 42: {}", jstr);
 
             if state[0] == "pushState" {
-
-                // let sobj = &state[1];
-                // println!("[Volumio] Volume is {}", sobj["volume"]);
-
-
-
-                let vstate: VolumioState = serde_json::from_value(state.as_array_mut().unwrap().remove(1)).unwrap();
-                // println!("[Volumio] Volume is: {}", vstate.volume);
-                // vstate.volume = sobj["volume"].as_i64().unwrap_or(0);
-
+                println!("Got 42: {}", jstr);
+                let vstate: Value = state.as_array_mut().unwrap().remove(1);
                 self.tx.send(Event::Volumio(vstate));
+
+//                let vstate: VolumioState = serde_json::from_value(state.as_array_mut().unwrap().remove(1)).unwrap();
+//                self.tx.send(Event::Volumio(vstate));
             } 
 
-        } else if ( jstr == "3" ) {
-            println!("[Volumio] got pong");
-        }
-        
-        // let state: VolumioState = json::decode(msg.into_text().expect("Ooops")).unwrap();
+        } 
+        // else if jstr == "3" {
+        //     println!("[Volumio] got pong");
+        // }
         
         Ok(())
-        // self.out.close(CloseCode::Normal)
+
     }
+}
+
+fn millis_since_epoch() -> usize {
+    let d = SystemTime::now().duration_since(UNIX_EPOCH).expect("SystemTime before UNIX EPOCH!");
+    let s: u64 = d.as_secs() * 1000;
+    let m: u64 = d.subsec_nanos() as u64 / 1_000_000;
+    ((s+m-1515234056) as usize)
+}
+
+// fn duration_as_millis(d: Duration) -> usize {
+//     println!("duration as millis from {}", d.as_secs());
+//     let s: usize = ((d.as_secs() as usize) - 1515234056) * 1000;
+//     let m: usize = d.subsec_nanos() as usize / 1_000_000;
+//     s+m
+// }
+
+
+fn rotel_knob_set_timestamp() {
+    rotel_knob_timestamp_value.store(millis_since_epoch(), Ordering::Relaxed)
+}
+
+fn rotel_knob_is_turning() -> bool {
+    (millis_since_epoch() - rotel_knob_timestamp_value.load(Ordering::Relaxed)) < 3000
 }
 
 
@@ -270,19 +329,19 @@ fn main() {
     if let Ok(mut port) = TTYPort::open(Path::new(port_name), &settings) {
 
         let fd_read  = port.as_raw_fd();
-        let fd_write = port.as_raw_fd(); // clone??
+        // let fd_write = port.as_raw_fd(); // clone??
 
         println!("port is open! #{}", fd_read);
 
-        let t_rotel_read = thread::spawn(move || {
+        thread::spawn(move || {
             rotel_reader_thread(fd_read, tx_main_r);
         });
 
-        let t_rotel_command = thread::spawn(move || {
+        thread::spawn(move || {
             rotel_command_thread(fd_read, rx_command);
         });
 
-        let t_ping = thread::spawn(move || {
+        thread::spawn(move || {
             loop {
                 thread::sleep(Duration::from_millis(25000));
                 tx_main_ping.send(Event::WsPing);
@@ -290,11 +349,12 @@ fn main() {
         });
 
 
-        let t_websocket = thread::spawn(move || {
+        thread::spawn(move || {
 
             loop {
-                println!("[Setup  ] Client Connect to Websocket");
-                let wsconn = ws::connect("ws://127.0.0.1:3000/socket.io/?EIO=3&transport=websocket", |out| WsClient { out: out, tx: tx_main.clone() } ).unwrap();
+
+                println!("[Setup  ] Client Connect to Volumio Websocket");
+                ws::connect("ws://127.0.0.1:3000/socket.io/?EIO=3&transport=websocket", |out| WsClient { out: out, tx: tx_main.clone() } ).unwrap();
                 println!("[Setup  ] Client Connection closed");
                 thread::sleep(Duration::from_millis(300));
             }
@@ -307,8 +367,8 @@ fn main() {
 
 
         let mut volumio_current_volume: i64 = 0;
-        let mut rotel_current_volume: i64 = 0;
-        let mut rotel_target_volume: i64  = 0;
+        // let mut rotel_current_volume: i64 = 0;
+        // let mut rotel_target_volume: i64  = 0;
 
         let mut volumio_sender: Option<ws::Sender> = None;
 
@@ -320,22 +380,28 @@ fn main() {
                     // println!("[Main   ] Rotel Event: {}", ur.name );
 
                     if ur.name == "volume" {
-                        let rvr = parse_rotel_volume(&ur.value);
-                        println!("[Main   ] Rotel Event: Volume {}", rvr);
-                        tx_command.send(RotelCommand::Received(rvr));
 
-                        if rotel_current_volume == rotel_target_volume {
-                            println!("[Main   ] Rotel => Volumio {}", rvr);
-                            rotel_target_volume = rvr;
-                            rotel_current_volume = rvr;
-                            let vnorm = normal_volume(ROTEL_VOLUME_MIN, ROTEL_VOLUME_MAX, rvr);
+                        let rotvol = parse_rotel_volume(&ur.value);
+                        // println!("[Main   ] Rotel Event: Volume {}", rotvol);
+                        tx_command.send(RotelCommand::Received(rotvol));
+
+                        if !rotel_is_adjusting() {
+                            rotel_knob_set_timestamp();
+                        }
+
+                        if rotel_knob_is_turning() {
+                            println!("[Main   ] (set.) Rotel => Volumio {}", rotvol);
+                            //rotel_target_volume  = rvr;
+                            //rotel_current_volume = rvr;
+                            let vnorm = normal_volume(ROTEL_VOLUME_MIN, ROTEL_VOLUME_MAX, rotvol);
                             volumio_current_volume = device_volume(VOLUMIO_VOLUME_MIN, VOLUMIO_VOLUME_MAX, vnorm);
                             volumio_sender = volumio_sender.map( |out| {
                                 out.send(format!("429[\"volume\", {}]", volumio_current_volume));
                                 out
                             });
                         } else {
-                            rotel_current_volume = rvr;
+                            // ??? rotel_current_volume = rotvol;
+                            println!("[Main   ] (ign.) Rotel => Volumio {}", rotvol);
                         }
                     } else {
                         println!("[Main   ] Rotel Event: Other {} = {}", ur.name, ur.value);
@@ -345,17 +411,26 @@ fn main() {
 
                 Ok(Event::Volumio(ps)) => {
                     
-                    if ps.volume != volumio_current_volume {
-                        println!("[Main   ] Volumio Event, Volume is {} (was: {})", ps.volume, volumio_current_volume);
-                        volumio_current_volume = ps.volume;
-                        if rotel_current_volume == rotel_target_volume {
+                    let ps_volume: i64 = ps["volume"].as_i64().unwrap();
+
+                    if ps_volume != volumio_current_volume {
+
+                        volumio_current_volume = ps_volume;
+
+                        if rotel_knob_is_turning() { // n second timeout when directly setting rotel volume
+                            println!("[Main   ] (ign.) Volumio Event, Volume is {} (was: {})", ps_volume, volumio_current_volume);
+                        } else {
+                            println!("[Main   ] (set.) Volumio Event, Volume is {} (was: {})", ps_volume, volumio_current_volume);
                             let vnorm = normal_volume(VOLUMIO_VOLUME_MIN, VOLUMIO_VOLUME_MAX, volumio_current_volume);
-                            rotel_target_volume = device_volume(ROTEL_VOLUME_MIN, ROTEL_VOLUME_MAX, vnorm);
+                            let rotel_target_volume = device_volume(ROTEL_VOLUME_MIN, ROTEL_VOLUME_MAX, vnorm);
                             tx_command.send(RotelCommand::Target(rotel_target_volume));
                         }
+
+
                     } else {
-                        println!("[Main   ] Volumio Event, Volume unchanged ({})", ps.volume);
+                        println!("[Main   ] Volumio Event, Volume unchanged ({})", ps_volume);
                     }
+
                 }, 
 
                 Ok(Event::WsConnect(snd)) => {
@@ -398,18 +473,10 @@ fn main() {
 
 
 
-// variable=something!
-// variable=07,texttex
-fn handleNextByte(c: u8) {
-    let a = [ c ];
-    io::stdout().write(&a);
-    io::stdout().write(b"\n");
-    io::stdout().flush();
-}
 
 
 fn rotel_is_adjusting() -> bool {
-    rotel_is_adjusting2.load(Ordering::Relaxed)
+    rotel_is_adjusting_value.load(Ordering::Relaxed)
 }
 
 fn rotel_command_thread(fd: RawFd, rx: Receiver<RotelCommand>) -> () {
@@ -421,6 +488,9 @@ fn rotel_command_thread(fd: RawFd, rx: Receiver<RotelCommand>) -> () {
 
     port.write_all("power_on!".as_bytes());
     port.flush();
+
+    port.write_all(&"pc_usb!".as_bytes());
+    port.flush();    
 
     port.write_all(&"get_volume!".as_bytes());
     port.flush();    
@@ -437,19 +507,20 @@ fn rotel_command_thread(fd: RawFd, rx: Receiver<RotelCommand>) -> () {
     loop {
     
         match rx.try_recv() {
+
             Ok(RotelCommand::Target(v)) => {
                 println!("    Set target: {}", v);
                 rotel_volume_target = v;
                 if !rotel_is_adjusting() {
                     rotel_volume_sent = rotel_volume_received; // initialize sent.
                 }
-                rotel_is_adjusting2.store(true, Ordering::Relaxed);
+                rotel_is_adjusting_value.store(true, Ordering::Relaxed);
             },
             Ok(RotelCommand::Received(v)) => {
                 rotel_volume_received = v;
             },
             Ok(RotelCommand::Command(s)) => {
-
+                println!("NYI {}", s)
             },
             Err(TryRecvError::Disconnected) => println!("Disconnected in rotel command thread"),
             Err(TryRecvError::Empty) => (),
@@ -459,7 +530,7 @@ fn rotel_command_thread(fd: RawFd, rx: Receiver<RotelCommand>) -> () {
             if rotel_volume_received == rotel_volume_target {
 
                 // this is it. no mor adjusting necessary
-                rotel_is_adjusting2.store(false, Ordering::Relaxed);
+                rotel_is_adjusting_value.store(false, Ordering::Relaxed);
                 println!("    Done.");
 
             } else {
@@ -488,7 +559,7 @@ fn rotel_command_thread(fd: RawFd, rx: Receiver<RotelCommand>) -> () {
             }
         }
     
-        thread::sleep(Duration::from_millis(100));
+        thread::sleep(Duration::from_millis(30));
 
     }
 
