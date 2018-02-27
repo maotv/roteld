@@ -48,11 +48,12 @@ impl Handler for WsToBrowser {
 
             let rmsg: Value = serde_json::from_str(&jstr[9..]).unwrap();
             let cmd = rmsg["Data"][0]["D"].as_str().unwrap();
-            // if cmd.starts_with("get_current_power")  {
-            //     self.out.send("{ \"D\": \"power=on!\"}").unwrap();
-            // } 
+            if cmd.starts_with("get_current_power")  {
+                self.out.send("{ \"D\": \"power=on!\"}").unwrap();
+            } 
             println!("Json message: {}", cmd);
             self.tx.send(Event::Serial(String::from(cmd)));
+            println!("Sent message: {}", cmd);
             // send to rotel device
         }
 

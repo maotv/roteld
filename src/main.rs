@@ -188,7 +188,7 @@ fn main() {
 
         });
 
-
+//        let wstb = WebSocket::new( |out| rwc::WsToBrowser { out: out, tx: tx_event_rwc.clone()  } ).unwrap();
         // let wssender = wstb.broadcaster().clone();
 
         thread::spawn(move || {
