@@ -4,16 +4,17 @@ extern crate ws;
 // use ws::{Handler, Handshake, Result, Message};
 use serde_json::Value;
 
-pub struct KeyValue {
+pub struct KeyValueRaw {
     pub name:  String,
-    pub value: String
+    pub value: String,
+    pub raw: String
 }
 
 
 
 pub enum Event {
 
-    Rotel(KeyValue),
+    Rotel(KeyValueRaw),
     Volumio(Value),
     Serial(String),
     WsConnect(ws::Sender),
