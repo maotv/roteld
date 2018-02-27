@@ -43,7 +43,7 @@ use std::os::unix::prelude::*;
 
 
 use common::Event;
-use common::KeyValue;
+use common::KeyValueRaw;
 
 const ROTEL_VOLUME_ABSMIN: i64 = 0;
 const ROTEL_VOLUME_ABSMAX: i64 = 96;
@@ -75,12 +75,13 @@ struct RotelState {
     power: bool,
 }
 
-pub struct UnitResponse {
-    pub state: usize,
-    pub count: usize,
-    pub name:  String,
-    pub slen:  String,
-    pub value: String
+struct UnitResponse {
+    state: usize,
+    count: usize,
+    name:  String,
+    slen:  String,
+    value: String,
+    raw: String
 }
 
 
@@ -88,7 +89,7 @@ pub struct UnitResponse {
 impl UnitResponse {
 
     fn new() -> UnitResponse {
-        UnitResponse { state: STATE_WAITFOR, count: 0, slen: String::new(), name:  String::new(), value: String::new()  }
+        UnitResponse { state: STATE_WAITFOR, count: 0, slen: String::new(), name:  String::new(), value: String::new(), raw: String::new()  }
     }
 
     fn clear(&mut self) {
@@ -100,6 +101,25 @@ impl UnitResponse {
     }
 
 }
+
+
+pub struct Rotel {
+
+}
+
+
+pub fn connect() {
+
+
+
+}
+
+impl Rotel {
+    fn connect(send: Sender<Event>) -> () {
+
+    }
+}
+
 
 
 fn millis_since_epoch() -> usize {
@@ -175,7 +195,8 @@ pub fn rotel_command_thread(fd: RawFd, rx: Receiver<RotelCommand>) -> () {
             },
 
             Ok(RotelCommand::Command(s)) => {
-                println!("NYI {}", s)
+                println!("[rotel ] Serial Event ({})", s);
+                // port.write_all(&s.as_bytes());
             },
 
             Err(TryRecvError::Disconnected) => println!("Disconnected in rotel command thread"),
@@ -248,7 +269,7 @@ pub fn rotel_reader_thread(fd: RawFd, tx: Sender<Event>) -> () {
                 if ures.state == STATE_DONE  {
 
                     // println!("[Rotel  ] {} = {}", ures.name, ures.value);
-                    tx.send(Event::Rotel( KeyValue { name: ures.name, value: ures.value } )).unwrap();
+                    tx.send(Event::Rotel( KeyValueRaw { name: ures.name, value: ures.value, raw: ures.raw } )).unwrap();
                     ures = UnitResponse::new(); 
 
                 }
@@ -292,6 +313,8 @@ fn wait_for_character(rv: &mut UnitResponse, c: u8)  {
 
 fn read_var_name(rv: &mut UnitResponse, c: u8)  {
 
+    rv.raw.push(c as char);
+
     if  c as char == '='  {
         // println!("VARNAME => {} is {}", rv.name, ctype(&rv.name));
         if ctype(&rv.name) == MODE_EOL {
@@ -310,6 +333,8 @@ fn read_var_name(rv: &mut UnitResponse, c: u8)  {
 
 fn read_length(rv: &mut UnitResponse, c: u8)  {
 
+    rv.raw.push(c as char);
+
     if c as char == ','  {
         let len: usize = rv.slen.parse().expect("not a number");
         // println!("LENGTH => {} = {}", rv.slen, len);
@@ -322,6 +347,8 @@ fn read_length(rv: &mut UnitResponse, c: u8)  {
 }
 
 fn read_n_chars(rv: &mut UnitResponse, c: u8)  {
+
+    rv.raw.push(c as char);
 
     if rv.count > 0 {
         rv.value.push(c as char);
@@ -336,6 +363,8 @@ fn read_n_chars(rv: &mut UnitResponse, c: u8)  {
 }
 
 fn read_to_eol(rv: &mut UnitResponse, c: u8)  {
+
+    rv.raw.push(c as char);
 
     if c as char == '!' {
         // println!("VALUE => {} is {}", rv.name, rv.value);

@@ -144,6 +144,7 @@ fn main() {
 
 //    let (tx_v, rx_v) = mpsc::channel();
     let (tx_event, rx_event) = mpsc::channel();
+    let tx_event_vol  = tx_event.clone();
     let tx_event_rwc  = tx_event.clone();
     let tx_event_r    = tx_event.clone();
     let tx_event_ping = tx_event.clone();
@@ -180,12 +181,32 @@ fn main() {
             loop {
 
                 println!("[Setup  ] Client Connect to Volumio Websocket");
-                ws::connect("ws://127.0.0.1:3000/socket.io/?EIO=3&transport=websocket", |out| volumio::WsToVolumio { out: out, tx: tx_event_rwc.clone() } ).unwrap();
+                ws::connect("ws://127.0.0.1:3000/socket.io/?EIO=3&transport=websocket", |out| volumio::WsToVolumio { out: out, tx: tx_event_vol.clone() } ).unwrap();
                 println!("[Setup  ] Client Connection closed");
                 thread::sleep(Duration::from_millis(300));
             }
 
         });
+
+
+        // let wssender = wstb.broadcaster().clone();
+
+        thread::spawn(move || {
+
+            let wstb = WebSocket::new( |out| rwc::WsToBrowser { out: out, tx: tx_event_rwc.clone()  } ).unwrap();
+            tx_event_rwc.send(Event::RwcBroadcaster(wstb.broadcaster().clone()));
+
+            //    tx_event_rwc.clone();
+            //loop {
+                wstb.listen( "192.168.178.53:8989" ).unwrap();
+                thread::sleep(Duration::from_millis(300));
+            // }
+
+        });
+
+
+
+
 
        // let t_alsa = thread::spawn(move || {
        //      main_alsa_thread(fd_write, rx_r, rx_v);
@@ -198,10 +219,6 @@ fn main() {
 
 
 //        let wstb = new WebSocket( |out| rwc::WsToBrowser { out: out, tx: tx_rwc } );
-        let wstb = WebSocket::new( |out| rwc::WsToBrowser { out: out, tx: tx_event.clone()  } ).unwrap();
-        let wssender = wstb.broadcaster();
-
-        wstb.listen("127.0.0.1:8989", ).unwrap();
 
 
 
@@ -212,6 +229,8 @@ fn main() {
 
         let mut volumio_sender: Option<ws::Sender> = None;
 
+        let mut rwc_out: Option<ws::Sender> = None;
+
 
         // ===================================================================
         //
@@ -220,10 +239,19 @@ fn main() {
         // ===================================================================
         loop {
 
+            println!("[Loop   ] --------------- Main Event Loop -------------");
+
             match rx_event.recv() {
 
                 Ok(Event::Rotel(ur)) => {
                     // println!("[Main   ] Rotel Event: {}", ur.name );
+
+                    rwc_out = rwc_out.map( |out| {
+                        println!("[Rotel] pass serial message to rwc");
+                        out.send(format!("{}",ur.raw));
+                        out
+                    });
+
 
                     if ur.name == "volume" {
 
@@ -280,8 +308,16 @@ fn main() {
                 }, 
 
                 Ok(Event::Serial(msg)) => {
+                    println!("[Main   ] Serial Event ({})", msg);
                     tx_command.send(RotelCommand::Command(msg));
                 },
+
+                Ok(Event::RwcBroadcaster(snd)) => {
+                    println!("[Main   ] Got Broadcaster");
+                    rwc_out = Some(snd);
+                },
+
+
 
                 Ok(Event::WsConnect(snd)) => {
 
@@ -309,9 +345,6 @@ fn main() {
         }
 
 
-
-//        t_rotel.join();
-//        t_alsa.join(); // just in case
         
     }
 
