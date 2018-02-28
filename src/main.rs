@@ -1,48 +1,15 @@
 extern crate argparse;
 extern crate serialport;
-// extern crate alsa;
-// extern crate alsa_sys;
-
 extern crate ws;
-
-#[macro_use]
-extern crate serde_derive;
-
-//extern crate serde;
 extern crate serde_json;
 
 use ws::WebSocket;
-// use ws::{Handler, Handshake, Result, Message};
-// use ws::Error as WsError;
-
-// use serde_json::Value;
-
-
-use std::thread;
-// use std::io::{self, Read, Write};
-
 use std::sync::mpsc;
-// use std::sync::mpsc::{Sender,Receiver,TryRecvError};
-
-//use std::sync::atomic::{AtomicBool, Ordering, ATOMIC_BOOL_INIT};
-// use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT};
-// use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::thread;
 use std::time::Duration;
-
-// use std::sync::mpsc::{Sender,Receiver};
-
-
-
-// use alsa::mixer::SelemId;
-// use alsa::mixer::SelemChannelId;
-// use alsa_sys::snd_mixer_handle_events;
-// use argparse::{ArgumentParser, Store};
 use serialport::prelude::*;
-
 use serialport::posix::TTYPort;
-// use std::os::unix::io::RawFd;
 use std::os::unix::prelude::*;
-
 use std::path::Path;
 
 mod common;
@@ -51,12 +18,15 @@ mod volumio;
 mod rotel;
 
 
+use volumio::Volumio;
+
 use common::Event;
 // use common::KeyValue;
 
+use rotel::Rotel;
 use rotel::RotelCommand;
 
-
+use rwc::SocketSerial;
 
 // const EMPTY: &'static str = "";
 
@@ -128,81 +98,107 @@ fn device_volume(min: i64, max: i64, value: f64) ->i64 {
 fn main() {
 
 
-    let port_name = "/dev/ttyUSB0";
+    // let port_name = "/dev/ttyUSB0";
 
-    let settings = SerialPortSettings {
+    // let settings = SerialPortSettings {
 
-        baud_rate: BaudRate::Baud115200,
-        data_bits: DataBits::Eight,
-        flow_control: FlowControl::None,
-        parity: Parity::None,
-        stop_bits: StopBits::One,
-        timeout: Duration::from_millis(1),
+    //     baud_rate: BaudRate::Baud115200,
+    //     data_bits: DataBits::Eight,
+    //     flow_control: FlowControl::None,
+    //     parity: Parity::None,
+    //     stop_bits: StopBits::One,
+    //     timeout: Duration::from_millis(1),
 
-    };
+    // };
 
 
 //    let (tx_v, rx_v) = mpsc::channel();
     let (tx_event, rx_event) = mpsc::channel();
-    let tx_event_vol  = tx_event.clone();
-    let tx_event_rwc  = tx_event.clone();
-    let tx_event_r    = tx_event.clone();
-    let tx_event_ping = tx_event.clone();
+    // let tx_event_vol  = tx_event.clone();
+    // let tx_event_r    = tx_event.clone();
+    // let tx_event_ping = tx_event.clone();
+    // let tx_event_dummy = tx_event.clone();
     //let tx2 = mpsc::Sender::clone(&tx1);
 
     let (tx_command, rx_command) = mpsc::channel();
 
 
-    if let Ok(mut port) = TTYPort::open(Path::new(port_name), &settings) {
-
-        let fd_read  = port.as_raw_fd();
-        // let fd_write = port.as_raw_fd(); // clone??
-
-        println!("port is open! #{}", fd_read);
-
-        thread::spawn(move || {
-            rotel::rotel_reader_thread(fd_read, tx_event_r);
-        });
-
-        thread::spawn(move || {
-            rotel::rotel_command_thread(fd_read, rx_command);
-        });
-
-        thread::spawn(move || {
-            loop {
-                thread::sleep(Duration::from_millis(25000));
-                tx_event_ping.send(Event::WsPing);
-            }
-        });
+    // let (tx_command_dummy, rx_command_dummy) = mpsc::channel();
 
 
-        thread::spawn(move || {
 
-            loop {
+    let amp: Rotel = Rotel::new();
 
-                println!("[Setup  ] Client Connect to Volumio Websocket");
-                ws::connect("ws://127.0.0.1:3000/socket.io/?EIO=3&transport=websocket", |out| volumio::WsToVolumio { out: out, tx: tx_event_vol.clone() } ).unwrap();
-                println!("[Setup  ] Client Connection closed");
-                thread::sleep(Duration::from_millis(300));
-            }
+    let txc = tx_event.clone();
+    amp.start(txc, rx_command);
 
-        });
 
-//        let wstb = WebSocket::new( |out| rwc::WsToBrowser { out: out, tx: tx_event_rwc.clone()  } ).unwrap();
+//    if let Ok(mut port) = TTYPort::open(Path::new(port_name), &settings) {
+
+        // let fd_read  = port.as_raw_fd();
+        // // let fd_write = port.as_raw_fd(); // clone??
+
+        // println!("port is open! #{}", fd_read);
+
+        // thread::spawn(move || {
+        //     rotel::rotel_reader_thread(fd_read, tx_event_r);
+        // });
+
+        // thread::spawn(move || {
+        //     rotel::rotel_command_thread(fd_read, rx_command);
+        // });
+
+
+
+        // thread::spawn(move || {
+
+        //     loop {
+
+        //         println!("[Setup  ] Client Connect to Volumio Websocket");
+        //         ws::connect("ws://127.0.0.1:3000/socket.io/?EIO=3&transport=websocket", |out| volumio::Volumio { out: out, tx: tx_event_vol.clone() } ).unwrap();
+        //         println!("[Setup  ] Client Connection closed");
+        //         thread::sleep(Duration::from_millis(300));
+        //     }
+
+        // });
+
+//        let wstb = WebSocket::new( |out| rwc::SocketSerial { out: out, tx: tx_event_rwc.clone()  } ).unwrap();
         // let wssender = wstb.broadcaster().clone();
 
+        let txc = tx_event.clone();
         thread::spawn(move || {
-
-            let wstb = WebSocket::new( |out| rwc::WsToBrowser { out: out, tx: tx_event_rwc.clone()  } ).unwrap();
-            tx_event_rwc.send(Event::RwcBroadcaster(wstb.broadcaster().clone()));
-
-            //    tx_event_rwc.clone();
-            //loop {
-                wstb.listen( "192.168.178.53:8989" ).unwrap();
-                thread::sleep(Duration::from_millis(300));
-            // }
-
+            Volumio::connect("ws://127.0.0.1:3000/socket.io/?EIO=3&transport=websocket", txc);
         });
+
+
+
+        let txc = tx_event.clone();
+        thread::spawn(move || {
+            SocketSerial::listen("192.168.178.53:8989", txc);
+        });
+
+
+        let txc = tx_event.clone();
+        thread::spawn(move || {
+            loop {
+                thread::sleep(Duration::from_millis(23000));
+                txc.send(Event::VolumioPing);
+            }
+        });
+
+
+        // thread::spawn(move || {
+
+        //     let wstb = WebSocket::new( |out| rwc::SocketSerial { out: out, tx: tx_event_rwc.clone()  } ).unwrap();
+        //     tx_event_rwc.send(Event::RwcBroadcaster(wstb.broadcaster().clone()));
+
+        //     //    tx_event_rwc.clone();
+        //     //loop {
+        //         wstb.listen( "192.168.178.53:8989" ).unwrap();
+        //         thread::sleep(Duration::from_millis(300));
+        //     // }
+
+        // });
 
 
 
@@ -213,12 +209,12 @@ fn main() {
        //  });
 
         // A WebSocket echo server
-        // let rotelWebClient = rwc::WsToBrowser { out: None };
+        // let rotelWebClient = rwc::SocketSerial { out: None };
         // ws::listen("127.0.0.1:8989", |out| rotelWebClient.with_out(out) ).unwrap();
 
 
 
-//        let wstb = new WebSocket( |out| rwc::WsToBrowser { out: out, tx: tx_rwc } );
+//        let wstb = new WebSocket( |out| rwc::SocketSerial { out: out, tx: tx_rwc } );
 
 
 
@@ -243,7 +239,7 @@ fn main() {
 
             match rx_event.recv() {
 
-                Ok(Event::Rotel(ur)) => {
+                Ok(Event::RotelMessage(ur)) => {
                     // println!("[Main   ] Rotel Event: {}", ur.name );
 
                     rwc_out = rwc_out.map( |out| {
@@ -288,7 +284,7 @@ fn main() {
 
                 }, 
 
-                Ok(Event::Volumio(ps)) => {
+                Ok(Event::VolumioState(ps)) => {
                     
                     let ps_volume: i64 = ps["volume"].as_i64().unwrap();
 
@@ -312,24 +308,24 @@ fn main() {
 
                 }, 
 
-                Ok(Event::Serial(msg)) => {
+                Ok(Event::SerialData(msg)) => {
                     println!("[Main   ] Serial Event ({})", msg);
                     tx_command.send(RotelCommand::Command(msg));
                 },
 
-                Ok(Event::RwcBroadcaster(snd)) => {
+                Ok(Event::SocketSerialBroadcaster(snd)) => {
                     println!("[Main   ] Got Broadcaster");
                     rwc_out = Some(snd);
                 },
 
 
 
-                Ok(Event::WsConnect(snd)) => {
+                Ok(Event::VolumioConnect(snd)) => {
 
                     volumio_sender = Some(snd);
                 },
 
-                Ok(Event::WsPing) => {
+                Ok(Event::VolumioPing) => {
                     volumio_sender = volumio_sender.map( |out| {
                         println!("[Volumio] send ping");
                         out.send("2");
@@ -351,7 +347,7 @@ fn main() {
 
 
         
-    }
+    //}
 
 
 

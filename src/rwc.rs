@@ -2,7 +2,7 @@
 extern crate ws;
 extern crate serde_json;
 
-
+use ws::WebSocket;
 use ws::{Handler, Handshake, Result, Message};
 // use ws::Error as WsError;
 
@@ -10,18 +10,57 @@ use ws::{Handler, Handshake, Result, Message};
 use serde_json::Value;
 use common::Event;
 use std::sync::mpsc;
+use std::sync::mpsc::Sender;
+use std::net::ToSocketAddrs;
 
+use std::thread;
 
-pub struct WsToBrowser {
+use std::time::Duration;
+pub struct SocketSerial {
     pub out: ws::Sender,
     pub tx: mpsc::Sender<Event>
 }
 
 
+impl SocketSerial {
+
+    pub fn listen(addr_spec: &'static str, tx: Sender<Event>) -> ()  {
+
+        
+
+            
+            // loop {
+                let wstb = WebSocket::new( |out| SocketSerial { out: out, tx: tx.clone()  } ).unwrap();
+                tx.send(Event::SocketSerialBroadcaster(wstb.broadcaster().clone()));
+                wstb.listen( addr_spec.clone() ).unwrap();
+                thread::sleep(Duration::from_millis(3000))
+            // }
+
+    
+    }
+
+
+
+}
+
+       // thread::spawn(move || {
+
+       //      let wstb = WebSocket::new( |out| rwc::SocketSerial { out: out, tx: tx_event_rwc.clone()  } ).unwrap();
+       //      tx_event_rwc.send(Event::RwcBroadcaster(wstb.broadcaster().clone()));
+
+       //      //    tx_event_rwc.clone();
+       //      //loop {
+       //          wstb.listen( "192.168.178.53:8989" ).unwrap();
+       //          thread::sleep(Duration::from_millis(300));
+       //      // }
+
+       //  });
+
+
 
 // We implement the Handler trait for Client so that we can get more
 // fine-grained control of the connection.
-impl Handler for WsToBrowser {
+impl Handler for SocketSerial {
 
     // `on_open` will be called only after the WebSocket handshake is successful
     // so at this point we know that the connection is ready to send/receive messages.
@@ -52,7 +91,7 @@ impl Handler for WsToBrowser {
                 self.out.send("{ \"D\": \"power=on!\"}").unwrap();
             } 
             println!("Json message: {}", cmd);
-            self.tx.send(Event::Serial(String::from(cmd)));
+            self.tx.send(Event::SerialData(String::from(cmd))).unwrap();
             println!("Sent message: {}", cmd);
             // send to rotel device
         }

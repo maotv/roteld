@@ -27,6 +27,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 // use std::sync::mpsc::{Sender,Receiver};
 
+use std::path::Path;
 
 
 // use alsa::mixer::SelemId;
@@ -35,11 +36,12 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 // use argparse::{ArgumentParser, Store};
 // use serialport::prelude::*;
 
-use serialport::posix::TTYPort;
 use std::os::unix::io::RawFd;
 use std::os::unix::prelude::*;
 
 // use std::path::Path;
+use serialport::prelude::*;
+use serialport::posix::TTYPort;
 
 
 use common::Event;
@@ -60,8 +62,8 @@ const STATE_NCHARS:  usize = 3;
 const STATE_READEOL: usize = 4;
 const STATE_DONE:    usize = 5;
 
-static rotel_is_adjusting_value: AtomicBool = ATOMIC_BOOL_INIT;
-static rotel_knob_timestamp_value: AtomicUsize = ATOMIC_USIZE_INIT;
+static ROTEL_IS_ADJUSTING_VALUE: AtomicBool = ATOMIC_BOOL_INIT;
+static ROTEL_KNOB_TIMESTAMP_VALUE: AtomicUsize = ATOMIC_USIZE_INIT;
 
 pub enum RotelCommand {
     Target(i64),
@@ -70,11 +72,11 @@ pub enum RotelCommand {
 }
 
 
+/*
 struct RotelState {
-
     power: bool,
 }
-
+*/
 struct UnitResponse {
     state: usize,
     count: usize,
@@ -89,38 +91,98 @@ struct UnitResponse {
 impl UnitResponse {
 
     fn new() -> UnitResponse {
-        UnitResponse { state: STATE_WAITFOR, count: 0, slen: String::new(), name:  String::new(), value: String::new(), raw: String::new()  }
-    }
-
-    fn clear(&mut self) {
-        self.state = STATE_WAITFOR;
-        self.count = 0;
-        self.name  = String::new();
-        self.slen  = String::new();
-        self.value = String::new();
+        UnitResponse { 
+            state: STATE_WAITFOR, 
+            count: 0, 
+            slen: String::new(), 
+            name:  String::new(), 
+            value: String::new(), 
+            raw: String::new()  
+        }
     }
 
 }
+
 
 
 pub struct Rotel {
-
+    fd: Option<TTYPort>
 }
 
-
-pub fn connect() {
-
-
-
-}
 
 impl Rotel {
-    fn connect(send: Sender<Event>) -> () {
 
+    pub fn new() -> Rotel {
+        let rt = Rotel { fd: None };
+        rt
     }
+
+    
+    pub fn start(mut self, tx: Sender<Event>, rx: Receiver<RotelCommand>) {
+
+        let port_name = "/dev/ttyUSB0";
+
+        let settings = SerialPortSettings {
+
+            baud_rate: BaudRate::Baud115200,
+            data_bits: DataBits::Eight,
+            flow_control: FlowControl::None,
+            parity: Parity::None,
+            stop_bits: StopBits::One,
+            timeout: Duration::from_millis(1),
+
+        };
+
+        self.fd = TTYPort::open(Path::new(port_name), &settings).ok();
+
+
+        if  self.fd.is_some() {
+
+            let port  = self.fd.unwrap().as_raw_fd();
+
+            println!("port is open! #{}", port);
+
+            thread::spawn(move || {
+                rotel_reader_thread(port, tx);
+            });
+
+            thread::spawn(move || {
+                rotel_command_thread(port, rx);
+            });
+
+        }
+
+
+/*
+
+            if let Ok(mut port) = TTYPort::open(Path::new(port_name), &settings) {
+
+        let fd_read  = port.as_raw_fd();
+        // let fd_write = port.as_raw_fd(); // clone??
+
+        println!("port is open! #{}", fd_read);
+
+        thread::spawn(move || {
+            rotel::rotel_reader_thread(fd_read, tx_event_r);
+        });
+
+        thread::spawn(move || {
+            rotel::rotel_command_thread(fd_read, rx_command);
+        });
+*/
+    }
+
+
+
+
 }
 
+/* TBD implement this as a class
 
+
+
+
+*/
 
 fn millis_since_epoch() -> usize {
     let d = SystemTime::now().duration_since(UNIX_EPOCH).expect("SystemTime before UNIX EPOCH!");
@@ -138,16 +200,16 @@ fn millis_since_epoch() -> usize {
 
 
 pub fn rotel_knob_set_timestamp() {
-    rotel_knob_timestamp_value.store(millis_since_epoch(), Ordering::Relaxed)
+    ROTEL_KNOB_TIMESTAMP_VALUE.store(millis_since_epoch(), Ordering::Relaxed)
 }
 
 pub fn rotel_knob_is_turning() -> bool {
-    (millis_since_epoch() - rotel_knob_timestamp_value.load(Ordering::Relaxed)) < 3000
+    (millis_since_epoch() - ROTEL_KNOB_TIMESTAMP_VALUE.load(Ordering::Relaxed)) < 3000
 }
 
 
 pub fn rotel_is_adjusting() -> bool {
-    rotel_is_adjusting_value.load(Ordering::Relaxed)
+    ROTEL_IS_ADJUSTING_VALUE.load(Ordering::Relaxed)
 }
 
 
@@ -187,7 +249,7 @@ pub fn rotel_command_thread(fd: RawFd, rx: Receiver<RotelCommand>) -> () {
                 if !rotel_is_adjusting() {
                     rotel_volume_sent = rotel_volume_received; // initialize sent.
                 }
-                rotel_is_adjusting_value.store(true, Ordering::Relaxed);
+                ROTEL_IS_ADJUSTING_VALUE.store(true, Ordering::Relaxed);
             },
 
             Ok(RotelCommand::Received(v)) => {
@@ -208,7 +270,7 @@ pub fn rotel_command_thread(fd: RawFd, rx: Receiver<RotelCommand>) -> () {
             if rotel_volume_received == rotel_volume_target {
 
                 // this is it. no mor adjusting necessary
-                rotel_is_adjusting_value.store(false, Ordering::Relaxed);
+                ROTEL_IS_ADJUSTING_VALUE.store(false, Ordering::Relaxed);
                 println!("    Done.");
 
             } else {
@@ -269,7 +331,7 @@ pub fn rotel_reader_thread(fd: RawFd, tx: Sender<Event>) -> () {
                 if ures.state == STATE_DONE  {
 
                     // println!("[Rotel  ] {} = {}", ures.name, ures.value);
-                    tx.send(Event::Rotel( KeyValueRaw { name: ures.name, value: ures.value, raw: ures.raw } )).unwrap();
+                    tx.send(Event::RotelMessage( KeyValueRaw { name: ures.name, value: ures.value, raw: ures.raw } )).unwrap();
                     ures = UnitResponse::new(); 
 
                 }

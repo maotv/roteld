@@ -14,12 +14,12 @@ pub struct KeyValueRaw {
 
 pub enum Event {
 
-    Rotel(KeyValueRaw),
-    Volumio(Value),
-    Serial(String),
-    RwcBroadcaster(ws::Sender),
-    WsConnect(ws::Sender),
-    WsPing
+    RotelMessage(KeyValueRaw),
+    VolumioState(Value),
+    SerialData(String),
+    SocketSerialBroadcaster(ws::Sender),
+    VolumioConnect(ws::Sender),
+    VolumioPing
 
 }
 

@@ -18,6 +18,11 @@ use std::sync::mpsc;
 
 use common::Event;
 
+use std::thread;
+use std::time::Duration;
+
+
+/*
 #[derive(Serialize, Deserialize)]
 #[serde(default = "VolumioState::default")]
 struct VolumioState {
@@ -46,7 +51,8 @@ struct VolumioState {
     service: String,
 
 }
-
+*/
+/*
 impl VolumioState {
 
     fn default() -> VolumioState {
@@ -78,21 +84,51 @@ impl VolumioState {
 
 
 }
-
+*/
 
 
 // Our Handler struct.
 // Here we explicity indicate that the Client needs a Sender,
 // whereas a closure captures the Sender for us automatically.
-pub struct WsToVolumio {
+pub struct Volumio {
     pub out: ws::Sender,
     pub tx:  mpsc::Sender<Event>,
 }
 
+impl Volumio {
+
+
+    pub fn connect(url: &str, tx: mpsc::Sender<Event>) {
+
+ 
+        loop {
+
+            println!("[Setup  ] Client Connect to Volumio Websocket");
+            ws::connect("ws://127.0.0.1:3000/socket.io/?EIO=3&transport=websocket", |out| Volumio { out: out, tx: tx.clone() } ).unwrap();
+            println!("[Setup  ] Client Connection closed");
+            thread::sleep(Duration::from_millis(300));
+        }
+
+ 
+
+
+
+    }
+
+
+    pub fn sender(self) -> Option<ws::Sender> {
+        Some(self.out.clone())
+    }
+
+
+}
+
+
+
 
 // We implement the Handler trait for Client so that we can get more
 // fine-grained control of the connection.
-impl Handler for WsToVolumio {
+impl Handler for Volumio {
 
     // `on_open` will be called only after the WebSocket handshake is successful
     // so at this point we know that the connection is ready to send/receive messages.
@@ -103,8 +139,8 @@ impl Handler for WsToVolumio {
         // Now we don't need to call unwrap since `on_open` returns a `Result<()>`.
         // If this call fails, it will only result in this connection disconnecting.
         println!("Volumio Open, send probe...");
-        self.out.send("2probe");
-        self.tx.send(Event::WsConnect( self.out.clone() ));
+        self.out.send("2probe").unwrap();
+        self.tx.send(Event::VolumioConnect( self.out.clone() )).unwrap();
         Ok(())
     }
 
@@ -125,7 +161,7 @@ impl Handler for WsToVolumio {
             if state[0] == "pushState" {
                 println!("Got 42: {}", jstr);
                 let vstate: Value = state.as_array_mut().unwrap().remove(1);
-                self.tx.send(Event::Volumio(vstate));
+                self.tx.send(Event::VolumioState(vstate)).expect("cannot send volumio state");
 
 //                let vstate: VolumioState = serde_json::from_value(state.as_array_mut().unwrap().remove(1)).unwrap();
 //                self.tx.send(Event::Volumio(vstate));
