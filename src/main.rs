@@ -248,7 +248,12 @@ fn main() {
 
                     rwc_out = rwc_out.map( |out| {
                         println!("[Rotel] pass serial message to rwc");
-                        out.send(format!("{}",ur.raw));
+                        if ur.name == "display" {
+                            out.send(format!("{} \"D\": \"{}\" {}","{", &ur.raw[..20], "}"));
+                            out.send(format!("{} \"D\": \"{}\" {}","{", &ur.raw[20..], "}"));
+                        } else {
+                            out.send(format!("{} \"D\": \"{}\" {}","{", ur.raw, "}"));
+                        }
                         out
                     });
 

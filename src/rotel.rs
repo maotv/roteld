@@ -196,7 +196,7 @@ pub fn rotel_command_thread(fd: RawFd, rx: Receiver<RotelCommand>) -> () {
 
             Ok(RotelCommand::Command(s)) => {
                 println!("[rotel ] Serial Event ({})", s);
-                // port.write_all(&s.as_bytes());
+                port.write_all(&s.as_bytes());
             },
 
             Err(TryRecvError::Disconnected) => println!("Disconnected in rotel command thread"),
