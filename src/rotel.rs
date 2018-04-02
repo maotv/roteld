@@ -106,19 +106,13 @@ impl UnitResponse {
 
 
 pub struct Rotel {
-    fd: Option<TTYPort>
+    tty: TTYPort
 }
 
 
-impl Rotel {
+impl  Rotel {
 
     pub fn new() -> Rotel {
-        let rt = Rotel { fd: None };
-        rt
-    }
-
-    
-    pub fn start(mut self, tx: Sender<Event>, rx: Receiver<RotelCommand>) {
 
         let port_name = "/dev/ttyUSB0";
 
@@ -133,26 +127,63 @@ impl Rotel {
 
         };
 
-        self.fd = TTYPort::open(Path::new(port_name), &settings).ok();
+        let rt = Rotel { tty: TTYPort::open(Path::new(port_name), &settings).unwrap() };
+        rt
+    }
 
 
-        if  self.fd.is_some() {
+    pub fn check(&self) {
+        let port = self.tty.as_raw_fd();
+        println!("port check! #{}", port);
+    }
 
-            let port  = self.fd.unwrap().as_raw_fd();
+ 
+    
+    pub fn start(&mut self, tx: Sender<Event>, rx: Receiver<RotelCommand>) {
 
-            println!("port is open! #{}", port);
 
-            thread::spawn(move || {
-                rotel_reader_thread(port, tx);
-            });
 
-            thread::spawn(move || {
-                rotel_command_thread(port, rx);
-            });
+        let port = self.tty.as_raw_fd();
+        println!("port is open! #{}", port);
+
+        thread::spawn(move || {
+            rotel_reader_thread(port, tx);
+        });
+
+        thread::spawn(move || {
+            rotel_command_thread(port, rx);
+        });
+
+
+/*
+        // self.fd = TTYPort::open(Path::new(port_name), &settings).ok();
+        if let Ok(mut px) = TTYPort::open(Path::new(port_name), &settings) {
+        
+
+            // if  self.fd.is_some() {
+                let port = px.as_raw_fd();
+                // let port  = self.fd.unwrap().as_raw_fd();
+
+                println!("port is open! #{}", port);
+
+                let mut xp: TTYPort = unsafe {  
+                    TTYPort::from_raw_fd(port)
+                };
+
+                thread::spawn(move || {
+                    rotel_reader_thread(port, tx);
+                });
+
+                thread::spawn(move || {
+                    rotel_command_thread(port, rx);
+                });
+
+                self.fd = Some(&px);
+
+            // }
 
         }
-
-
+    */
 /*
 
             if let Ok(mut port) = TTYPort::open(Path::new(port_name), &settings) {
@@ -216,7 +247,7 @@ pub fn rotel_is_adjusting() -> bool {
 
 pub fn rotel_command_thread(fd: RawFd, rx: Receiver<RotelCommand>) -> () {
 
-    println!("rotel thread with fd {}", fd);
+    println!("rotel_command_thread with fd {}", fd);
     let mut port: TTYPort = unsafe {  
          TTYPort::from_raw_fd(fd)
     };
@@ -257,7 +288,7 @@ pub fn rotel_command_thread(fd: RawFd, rx: Receiver<RotelCommand>) -> () {
             },
 
             Ok(RotelCommand::Command(s)) => {
-                println!("[rotel ] Serial Event ({})", s);
+                println!("[rotel ] Command Event ({})", s);
                 port.write_all(&s.as_bytes());
             },
 
@@ -312,7 +343,7 @@ pub fn rotel_command_thread(fd: RawFd, rx: Receiver<RotelCommand>) -> () {
 
 pub fn rotel_reader_thread(fd: RawFd, tx: Sender<Event>) -> () {
     
-    println!("rotel thread with fd {}", fd);
+    println!("rotel_reader_thread with fd {}", fd);
     let mut port: TTYPort = unsafe {  
          TTYPort::from_raw_fd(fd)
     };

@@ -127,7 +127,7 @@ fn main() {
 
 
 
-    let amp: Rotel = Rotel::new();
+    let mut amp: Rotel = Rotel::new();
 
     let txc = tx_event.clone();
     amp.start(txc, rx_command);
@@ -236,6 +236,7 @@ fn main() {
         loop {
 
             println!("[Loop   ] --------------- Main Event Loop -------------");
+            amp.check();
 
             match rx_event.recv() {
 
