@@ -1,0 +1,18 @@
+[Unit]
+Description = Rotel Amplifier Module
+Wants=volumio.service
+
+
+[Service]
+ExecStart=/home/volumio/bin/roteld
+Restart=always
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=roteld
+User=volumio
+Group=volumio
+Environment=
+
+[Install]
+WantedBy=multi-user.target
+
