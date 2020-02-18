@@ -53,11 +53,13 @@ fn main() {
     let setup_default = String::from("setup.json");
     let setup_json = args.get(0).unwrap_or(&setup_default);
 
-    let setup: Setup = serde_json::from_str(setup_json).unwrap();
 
     let mut file = File::open(setup_json).unwrap();
     let mut data = String::new();
     file.read_to_string(&mut data).unwrap();
+
+    let setup: Setup = serde_json::from_str(&data).expect("cannot read setup json");
+
 
     let (tx_event, rx_event) = mpsc::channel();
     let (tx_command, rx_command) = mpsc::channel();
