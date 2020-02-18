@@ -8,10 +8,9 @@ use ws::{Handler, Handshake, Result, Message};
 
 
 use serde_json::Value;
-use common::Event;
+use crate::common::Event;
 use std::sync::mpsc;
 use std::sync::mpsc::Sender;
-use std::net::ToSocketAddrs;
 
 use std::thread;
 
@@ -31,7 +30,9 @@ impl SocketSerial {
             
             // loop {
                 let wstb = WebSocket::new( |out| SocketSerial { out: out, tx: tx.clone()  } ).unwrap();
-                tx.send(Event::SocketSerialBroadcaster(wstb.broadcaster().clone()));
+                if let Err(e) = tx.send(Event::SocketSerialBroadcaster(wstb.broadcaster().clone())) {
+                    println!("Error sending Event::SocketSerialBroadcaster {:?}",e);
+                }
                 wstb.listen( addr_spec.clone() ).unwrap();
                 thread::sleep(Duration::from_millis(3000))
             // }

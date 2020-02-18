@@ -21,8 +21,7 @@ use std::io::{Read, Write};
 // use std::sync::mpsc;
 use std::sync::mpsc::{Sender,Receiver,TryRecvError};
 
-use std::sync::atomic::{AtomicBool, Ordering, ATOMIC_BOOL_INIT};
-use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 // use std::sync::mpsc::{Sender,Receiver};
@@ -44,8 +43,8 @@ use serialport::prelude::*;
 use serialport::posix::TTYPort;
 
 
-use common::Event;
-use common::KeyValueRaw;
+use crate::common::Event;
+use crate::common::KeyValueRaw;
 
 const ROTEL_VOLUME_ABSMIN: i64 = 0;
 const ROTEL_VOLUME_ABSMAX: i64 = 96;
@@ -62,8 +61,8 @@ const STATE_NCHARS:  usize = 3;
 const STATE_READEOL: usize = 4;
 const STATE_DONE:    usize = 5;
 
-static ROTEL_IS_ADJUSTING_VALUE: AtomicBool = ATOMIC_BOOL_INIT;
-static ROTEL_KNOB_TIMESTAMP_VALUE: AtomicUsize = ATOMIC_USIZE_INIT;
+static ROTEL_IS_ADJUSTING_VALUE: AtomicBool = AtomicBool::new(false); //  ATOMIC_BOOL_INIT;
+static ROTEL_KNOB_TIMESTAMP_VALUE: AtomicUsize = AtomicUsize::new(0); // ATOMIC_USIZE_INIT;
 
 pub enum RotelCommand {
     Target(i64),
@@ -106,19 +105,19 @@ impl UnitResponse {
 
 
 pub struct Rotel {
-    tty: TTYPort
+    tty: Option<TTYPort>
 }
 
 
 impl  Rotel {
 
-    pub fn new() -> Rotel {
+    pub fn new(serial: &str) -> Rotel {
 
-        let port_name = "/dev/ttyUSB0";
+        let port_name = String::from(serial); "/dev/ttyUSB0";
 
         let settings = SerialPortSettings {
 
-            baud_rate: BaudRate::Baud115200,
+            baud_rate: 115200, // BaudRate::Baud115200,
             data_bits: DataBits::Eight,
             flow_control: FlowControl::None,
             parity: Parity::None,
@@ -127,23 +126,28 @@ impl  Rotel {
 
         };
 
-        let rt = Rotel { tty: TTYPort::open(Path::new(port_name), &settings).unwrap() };
-        rt
+
+        let optty = TTYPort::open(Path::new(&port_name), &settings).ok();
+        Rotel { tty: optty }
+        
     }
 
 
-    pub fn check(&self) {
-        let port = self.tty.as_raw_fd();
-        println!("port check! #{}", port);
-    }
+    // pub fn check(&self) {
+    //     let port = self.tty.as_raw_fd();
+    //     println!("port check! #{}", port);
+    // }
 
  
     
     pub fn start(&mut self, tx: Sender<Event>, rx: Receiver<RotelCommand>) {
 
+        let port = match &self.tty {
+            Some(p) => p.as_raw_fd(),
+            None => 0
+        };
 
-
-        let port = self.tty.as_raw_fd();
+        // let port = self.tty.unwrap_or(0).as_raw_fd();
         println!("port is open! #{}", port);
 
         thread::spawn(move || {
@@ -154,66 +158,9 @@ impl  Rotel {
             rotel_command_thread(port, rx);
         });
 
-
-/*
-        // self.fd = TTYPort::open(Path::new(port_name), &settings).ok();
-        if let Ok(mut px) = TTYPort::open(Path::new(port_name), &settings) {
-        
-
-            // if  self.fd.is_some() {
-                let port = px.as_raw_fd();
-                // let port  = self.fd.unwrap().as_raw_fd();
-
-                println!("port is open! #{}", port);
-
-                let mut xp: TTYPort = unsafe {  
-                    TTYPort::from_raw_fd(port)
-                };
-
-                thread::spawn(move || {
-                    rotel_reader_thread(port, tx);
-                });
-
-                thread::spawn(move || {
-                    rotel_command_thread(port, rx);
-                });
-
-                self.fd = Some(&px);
-
-            // }
-
-        }
-    */
-/*
-
-            if let Ok(mut port) = TTYPort::open(Path::new(port_name), &settings) {
-
-        let fd_read  = port.as_raw_fd();
-        // let fd_write = port.as_raw_fd(); // clone??
-
-        println!("port is open! #{}", fd_read);
-
-        thread::spawn(move || {
-            rotel::rotel_reader_thread(fd_read, tx_event_r);
-        });
-
-        thread::spawn(move || {
-            rotel::rotel_command_thread(fd_read, rx_command);
-        });
-*/
     }
 
-
-
-
 }
-
-/* TBD implement this as a class
-
-
-
-
-*/
 
 fn millis_since_epoch() -> usize {
     let d = SystemTime::now().duration_since(UNIX_EPOCH).expect("SystemTime before UNIX EPOCH!");
@@ -221,13 +168,6 @@ fn millis_since_epoch() -> usize {
     let m: u64 = d.subsec_nanos() as u64 / 1_000_000;
     ((s+m-1515234056) as usize)
 }
-
-// fn duration_as_millis(d: Duration) -> usize {
-//     println!("duration as millis from {}", d.as_secs());
-//     let s: usize = ((d.as_secs() as usize) - 1515234056) * 1000;
-//     let m: usize = d.subsec_nanos() as usize / 1_000_000;
-//     s+m
-// }
 
 
 pub fn rotel_knob_set_timestamp() {
@@ -245,21 +185,34 @@ pub fn rotel_is_adjusting() -> bool {
 
 
 
+
+
 pub fn rotel_command_thread(fd: RawFd, rx: Receiver<RotelCommand>) -> () {
 
     println!("rotel_command_thread with fd {}", fd);
+
+    // do nothing without port
+    if fd == 0 {
+        loop {
+            match rx.try_recv() {
+                Ok(RotelCommand::Target(v)) => println!("    (Dummy) Set target: {}", v),
+                Ok(RotelCommand::Received(v)) => println!("    (Dummy) Volume: {}", v),
+                Ok(RotelCommand::Command(s)) => println!("    (Dummy) Command Event ({})", s),
+                Err(TryRecvError::Empty) => (),
+                Err(TryRecvError::Disconnected) =>  println!("    (Dummy) Disconnected")
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+
     let mut port: TTYPort = unsafe {  
          TTYPort::from_raw_fd(fd)
     };
 
-    port.write_all("power_on!".as_bytes());
-    port.flush();
-
-    port.write_all(&"pc_usb!".as_bytes());
-    port.flush();    
-
-    port.write_all(&"get_volume!".as_bytes());
-    port.flush();    
+    port.write_all("power_on!".as_bytes()).and_then(|_| port.flush()).unwrap_or(());
+    port.write_all(&"pc_usb!".as_bytes()).and_then(|_| port.flush()).unwrap_or(());
+    port.write_all(&"get_volume!".as_bytes()).and_then(|_| port.flush()).unwrap_or(());
 
     // last volume value sent to rotel
     let mut rotel_volume_sent     = 0;
@@ -289,7 +242,9 @@ pub fn rotel_command_thread(fd: RawFd, rx: Receiver<RotelCommand>) -> () {
 
             Ok(RotelCommand::Command(s)) => {
                 println!("[rotel ] Command Event ({})", s);
-                port.write_all(&s.as_bytes());
+                if let Err(e) = port.write_all(&s.as_bytes()) {
+                    println!("[rotel ] Error ({:?})", e);
+                }
             },
 
             Err(TryRecvError::Disconnected) => println!("Disconnected in rotel command thread"),
@@ -313,7 +268,9 @@ pub fn rotel_command_thread(fd: RawFd, rx: Receiver<RotelCommand>) -> () {
                     println!("    Waiting for confirmation: sent: {} received: {} target: {}", rotel_volume_sent, rotel_volume_received, rotel_volume_target);
                     let rotel_command = format!("volume_{}!", rotel_volume_sent);
                     println!("    Send2: {}", rotel_command);
-                    port.write_all(&rotel_command.as_bytes());
+                    if let Err(e) = port.write_all(&rotel_command.as_bytes()) {
+                        println!("    Send2: Error ({:?})", e);
+                    }
 
                 } else {
 
@@ -321,7 +278,9 @@ pub fn rotel_command_thread(fd: RawFd, rx: Receiver<RotelCommand>) -> () {
                     let rotel_command = format!("volume_{}!", rotel_volume_sent);
                     println!("    Send1: {}", rotel_command);
                     // set on rotel device
-                    port.write_all(&rotel_command.as_bytes());
+                    if let Err(e) = port.write_all(&rotel_command.as_bytes()) {
+                        println!("    Send1: Error ({:?})", e);
+                    }
 
                 }
 
@@ -344,6 +303,15 @@ pub fn rotel_command_thread(fd: RawFd, rx: Receiver<RotelCommand>) -> () {
 pub fn rotel_reader_thread(fd: RawFd, tx: Sender<Event>) -> () {
     
     println!("rotel_reader_thread with fd {}", fd);
+
+    // do nothing if there is no port exept keeping messaging open.
+    if fd == 0 {
+        loop {
+            thread::sleep(Duration::from_millis(7000));
+        }
+    }
+
+
     let mut port: TTYPort = unsafe {  
          TTYPort::from_raw_fd(fd)
     };
@@ -370,6 +338,7 @@ pub fn rotel_reader_thread(fd: RawFd, tx: Sender<Event>) -> () {
         }
     }
 }
+
 
 
 pub fn parse_rotel_volume(v: &String) -> i64 {

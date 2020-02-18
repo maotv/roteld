@@ -1,9 +1,3 @@
-
-
-// #[macro_use]
-// extern crate serde_derive;
-
-// extern crate serde;
 extern crate serde_json;
 
 extern crate ws;
@@ -14,77 +8,12 @@ use ws::Error as WsError;
 use serde_json::Value;
 
 use std::sync::mpsc;
-// use std::sync::mpsc::{Sender,Receiver,TryRecvError};
 
-use common::Event;
+use crate::common::Event;
 
 use std::thread;
 use std::time::Duration;
 
-
-/*
-#[derive(Serialize, Deserialize)]
-#[serde(default = "VolumioState::default")]
-struct VolumioState {
-
-    status: String,
-    position: i64,
-    title: String,
-    artist: String,
-    album: String,
-    albumart: String,
-    trackType: String,
-    seek: i64,
-    duration: i64,
-    samplerate: String,
-    bitdepth: String,
-    channels: i64,
-    random: Value,
-    repeat: Value,
-    repeatSingle: bool,
-    consume: bool,
-    volume: i64,
-    mute: bool,
-    stream: String,
-    updatedb: bool,
-    volatile: bool,
-    service: String,
-
-}
-*/
-/*
-impl VolumioState {
-
-    fn default() -> VolumioState {
-        VolumioState {
-            status: String::from(""),
-            position: 0,
-            title: String::from(""),
-            artist: String::from(""),
-            album: String::from(""),
-            albumart: String::from(""),
-            trackType: String::from(""),
-            seek: 0,
-            duration: 0,
-            samplerate: String::from(""),
-            bitdepth: String::from(""),
-            channels: 0,
-            random: Value::Bool(false),
-            repeat: Value::Bool(false),
-            repeatSingle: false,
-            consume: false,
-            volume: 0,
-            mute: false,
-            stream: String::from(""),
-            updatedb: false,
-            volatile: false,
-            service: String::from(""),
-        }
-    }
-
-
-}
-*/
 
 
 // Our Handler struct.
@@ -104,9 +33,12 @@ impl Volumio {
         loop {
 
             println!("[Setup  ] Client Connect to Volumio Websocket");
-            ws::connect("ws://127.0.0.1:3000/socket.io/?EIO=3&transport=websocket", |out| Volumio { out: out, tx: tx.clone() } ).unwrap();
+            ws::connect( url /*"ws://192.168.178.53:3000/socket.io/?EIO=3&transport=websocket"*/, 
+                |out| Volumio { out: out, tx: tx.clone() } ).unwrap();
+//            ws::connect("ws://127.0.0.1:3000/socket.io/?EIO=3&transport=websocket", |out| Volumio { out: out, tx: tx.clone() } ).unwrap();
             println!("[Setup  ] Client Connection closed");
-            thread::sleep(Duration::from_millis(300));
+            thread::sleep(Duration::from_millis(3000));
+            
         }
 
  
@@ -116,9 +48,9 @@ impl Volumio {
     }
 
 
-    pub fn sender(self) -> Option<ws::Sender> {
-        Some(self.out.clone())
-    }
+    // pub fn sender(self) -> Option<ws::Sender> {
+    //     Some(self.out.clone())
+    // }
 
 
 }
