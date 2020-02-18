@@ -51,7 +51,7 @@ fn main() {
     println!("{:?}", args);
 
     let setup_default = String::from("setup.json");
-    let setup_json = args.get(0).unwrap_or(&setup_default);
+    let setup_json = args.get(1).unwrap_or(&setup_default);
 
 
     let mut file = File::open(setup_json).unwrap();
