@@ -25,7 +25,7 @@ use std::fs::File;
 use std::io::Read;
 
 const ROTEL_VOLUME_MIN: i64 = 1;
-const ROTEL_VOLUME_MAX: i64 = 64;
+const ROTEL_VOLUME_MAX: i64 = 72;
 
 const VOLUMIO_VOLUME_MIN: i64 = 0;
 const VOLUMIO_VOLUME_MAX: i64 = 100;
