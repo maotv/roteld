@@ -329,7 +329,7 @@ pub fn rotel_reader_thread(fd: RawFd, tx: Sender<Event>) -> () {
 
                 if ures.state == STATE_DONE  {
 
-                    // println!("[Rotel  ] {} = {}", ures.name, ures.value);
+                    println!("[Rotel  ] {} = {}", ures.name, ures.value);
                     tx.send(Event::RotelMessage( KeyValueRaw { name: ures.name, value: ures.value, raw: ures.raw } )).unwrap();
                     ures = UnitResponse::new(); 
 

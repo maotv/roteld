@@ -10,6 +10,8 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
+use log::{info,debug,warn,error};
+
 mod common;
 mod rwc; // rotel-web-client
 mod volumio;
@@ -23,6 +25,8 @@ use rwc::SocketSerial;
 
 use std::fs::File;
 use std::io::Read;
+
+use env_logger::Env;
 
 const ROTEL_VOLUME_MIN: i64 = 1;
 const ROTEL_VOLUME_MAX: i64 = 72;
@@ -47,8 +51,14 @@ struct Setup {
 
 fn main() {
 
+    let env = Env::default()
+        .filter_or("MY_LOG_LEVEL", "trace")
+        .write_style_or("MY_LOG_STYLE", "always");
+
+    env_logger::init_from_env(env);
+
     let args: Vec<String> = std::env::args().collect();
-    println!("{:?}", args);
+    info!("{:?}", args);
 
     let setup_default = String::from("setup.json");
     let setup_json = args.get(1).unwrap_or(&setup_default);

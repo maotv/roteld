@@ -9,6 +9,10 @@ serialport = "3.3.0"
 argparse = "0.2.2"
 ws = "0.9.1"
 
+
+log = "0.4.8"
+env_logger = "0.7.1"
+
 # The core APIs, including the Serialize and Deserialize traits. Always
 # required when using Serde.
 serde = "1.0.104"
