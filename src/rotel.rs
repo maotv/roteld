@@ -9,6 +9,7 @@ extern crate ws;
 extern crate serde_json;
 
 
+use log::{debug,warn,error};
 // use ws::{Handler, Handshake, Result, Message};
 // use ws::Error as WsError;
 
@@ -50,19 +51,45 @@ const ROTEL_VOLUME_ABSMIN: i64 = 0;
 const ROTEL_VOLUME_ABSMAX: i64 = 96;
 
 
-const MODE_EOL: usize = 0; // variable value is terminated with ! 
-const MODE_STR: usize = 1; // variable is given as ###,some text where ### is text length
+// const MODE_EOL: usize = 0; // variable value is terminated with ! 
+// const MODE_STR: usize = 1; // variable is given as ###,some text where ### is text length
 
 
-const STATE_WAITFOR: usize = 0;
-const STATE_VARNAME: usize = 1;
-const STATE_LENGTH:  usize = 2;
-const STATE_NCHARS:  usize = 3;
-const STATE_READEOL: usize = 4;
-const STATE_DONE:    usize = 5;
+// const STATE_WAITFOR: usize = 0;
+// const STATE_VARNAME: usize = 1;
+// const STATE_LENGTH:  usize = 2;
+// const STATE_NCHARS:  usize = 3;
+// const STATE_READEOL: usize = 4;
+// const STATE_DONE:    usize = 5;
 
-static ROTEL_IS_ADJUSTING_VALUE: AtomicBool = AtomicBool::new(false); //  ATOMIC_BOOL_INIT;
+const POWER_STATE_OFF: usize = 0;
+const POWER_STATE_STANDBY: usize = 1;
+const POWER_STATE_ON: usize = 2;
+
+static ROTEL_POWER_STATE:   AtomicUsize = AtomicUsize::new(0); //  ATOMIC_BOOL_INIT;
+
+static ROTEL_IS_ADJUSTING_VALUE:   AtomicBool = AtomicBool::new(false); //  ATOMIC_BOOL_INIT;
 static ROTEL_KNOB_TIMESTAMP_VALUE: AtomicUsize = AtomicUsize::new(0); // ATOMIC_USIZE_INIT;
+
+
+enum ParserState {
+
+    WAITFOR, // wait for a ascii (non-control-) character on the stream
+    VARNAME, // read the variable name in a somename=someval! construct
+    LENGTH,  // 
+    NCHARS,
+    READEOL, // read until !
+    DONE     // done reading one command
+    // IGNORE   // done reading but ignore the result
+}
+
+
+enum CmdMode {
+    EOL, // variable value is terminated with ! 
+    STR, // variable is given as ###,some text where ### is text length
+    PWR  // special case "00:power_off!"
+}
+
 
 pub enum RotelCommand {
     Target(i64),
@@ -77,7 +104,7 @@ struct RotelState {
 }
 */
 struct UnitResponse {
-    state: usize,
+    state: ParserState,
     count: usize,
     name:  String,
     slen:  String,
@@ -91,7 +118,7 @@ impl UnitResponse {
 
     fn new() -> UnitResponse {
         UnitResponse { 
-            state: STATE_WAITFOR, 
+            state: ParserState::WAITFOR, 
             count: 0, 
             slen: String::new(), 
             name:  String::new(), 
@@ -212,6 +239,8 @@ pub fn rotel_command_thread(fd: RawFd, rx: Receiver<RotelCommand>) -> () {
 
 //    port.write_all("power_on!".as_bytes()).and_then(|_| port.flush()).unwrap_or(());
 //    port.write_all(&"pc_usb!".as_bytes()).and_then(|_| port.flush()).unwrap_or(());
+    port.write_all(&"get_product_type!".as_bytes()).and_then(|_| port.flush()).unwrap_or(());
+    port.write_all(&"get_current_power!".as_bytes()).and_then(|_| port.flush()).unwrap_or(());
     port.write_all(&"get_volume!".as_bytes()).and_then(|_| port.flush()).unwrap_or(());
 
     // last volume value sent to rotel
@@ -243,7 +272,7 @@ pub fn rotel_command_thread(fd: RawFd, rx: Receiver<RotelCommand>) -> () {
             Ok(RotelCommand::Command(s)) => {
                 println!("[rotel ] Command Event ({})", s);
                 if let Err(e) = port.write_all(&s.as_bytes()) {
-                    println!("[rotel ] Error ({:?})", e);
+                    error!("[rotel ] Error ({:?})", e);
                 }
             },
 
@@ -306,6 +335,7 @@ pub fn rotel_reader_thread(fd: RawFd, tx: Sender<Event>) -> () {
 
     // do nothing if there is no port exept keeping messaging open.
     if fd == 0 {
+        warn!("no serial port, will idle");
         loop {
             thread::sleep(Duration::from_millis(7000));
         }
@@ -327,14 +357,18 @@ pub fn rotel_reader_thread(fd: RawFd, tx: Sender<Event>) -> () {
 
                 process_one(&mut ures, *c);
 
-                if ures.state == STATE_DONE  {
-
-                    println!("[Rotel  ] {} = {}", ures.name, ures.value);
-                    tx.send(Event::RotelMessage( KeyValueRaw { name: ures.name, value: ures.value, raw: ures.raw } )).unwrap();
+                if let ParserState::DONE = ures.state {
+                    println!("[Rotel  ] Message: [{}] = \"{}\"", ures.name, ures.value);
+                    if ures.name.len() > 1 {
+                        tx.send(Event::RotelMessage( KeyValueRaw { name: ures.name, value: ures.value, raw: ures.raw } )).unwrap();
+                    } else {
+                        debug!("[Rotel  ] Ignoring message due to insufficient length");
+                    }
+                    // reset the state machine
                     ures = UnitResponse::new(); 
-
                 }
             }
+
         }
     }
 }
@@ -354,13 +388,18 @@ pub fn parse_rotel_volume(v: &String) -> i64 {
 
 fn process_one(rv: &mut UnitResponse, c: u8) {
 
-    println!("[C] {}", c as char);
+    if  c > 32 && c < 127  {
+        println!("[C] {}", c as char);
+    } else {
+        println!("[C] #{}", c);
+    }
+
     match rv.state {
-        STATE_WAITFOR => wait_for_character(rv, c),
-        STATE_VARNAME => read_var_name(rv, c),
-        STATE_LENGTH  => read_length(rv, c),
-        STATE_NCHARS  => read_n_chars(rv, c),
-        STATE_READEOL => read_to_eol(rv, c),
+        ParserState::WAITFOR => wait_for_character(rv, c),
+        ParserState::VARNAME => read_var_name(rv, c),
+        ParserState::LENGTH  => read_length(rv, c),
+        ParserState::NCHARS  => read_n_chars(rv, c),
+        ParserState::READEOL => read_to_eol(rv, c),
         _ => ()
     }
 
@@ -368,7 +407,7 @@ fn process_one(rv: &mut UnitResponse, c: u8) {
 
 fn wait_for_character(rv: &mut UnitResponse, c: u8)  {
     if  c > 32 && c < 127  {
-        rv.state = STATE_VARNAME;
+        rv.state = ParserState::VARNAME;
         read_var_name(rv, c);
     }
 }
@@ -379,16 +418,22 @@ fn read_var_name(rv: &mut UnitResponse, c: u8)  {
     rv.raw.push(c as char);
 
     if  c as char == '='  {
-        // println!("VARNAME => {} is {}", rv.name, ctype(&rv.name));
-        if ctype(&rv.name) == MODE_EOL {
-            rv.state = STATE_READEOL;
-        } else {
-            rv.state = STATE_LENGTH;
+        match ctype(&rv.name) {
+            CmdMode::EOL => rv.state = ParserState::READEOL,
+            CmdMode::STR => rv.state = ParserState::LENGTH,
+            CmdMode::PWR => rv.state = ParserState::DONE
         }
+
+        // println!("VARNAME => {} is {}", rv.name, ctype(&rv.name));
+        // if ctype(&rv.name) == MODE_EOL {
+        //     rv.state = STATE_READEOL;
+        // } else {
+        //     rv.state = STATE_LENGTH;
+        // }
     } else if c as char == '!'  {
         // WARN: invalid command name
-        println!("WARN: invalid command name {}", rv.name);
-            rv.state = STATE_DONE;
+        // println!("WARN: invalid command name {}", rv.name);
+        rv.state = ParserState::DONE;
     } else {
         rv.name.push(c as char);
     }
@@ -402,7 +447,7 @@ fn read_length(rv: &mut UnitResponse, c: u8)  {
     if c as char == ','  {
         let len: usize = rv.slen.parse().expect("not a number");
         // println!("LENGTH => {} = {}", rv.slen, len);
-        rv.state = STATE_NCHARS;
+        rv.state = ParserState::NCHARS;
         rv.count = len;
     } else {
         rv.slen.push(c as char);
@@ -421,7 +466,7 @@ fn read_n_chars(rv: &mut UnitResponse, c: u8)  {
 
     if rv.count == 0 {
         // println!("VALUE => {} is {}", rv.name, rv.value);
-        rv.state = STATE_DONE;
+        rv.state = ParserState::DONE;
     }
 
 }
@@ -432,7 +477,7 @@ fn read_to_eol(rv: &mut UnitResponse, c: u8)  {
 
     if c as char == '!' {
         // println!("VALUE => {} is {}", rv.name, rv.value);
-        rv.state = STATE_DONE;
+        rv.state = ParserState::DONE;
     } else {
         rv.value.push(c as char);
     }
@@ -440,31 +485,33 @@ fn read_to_eol(rv: &mut UnitResponse, c: u8)  {
 }
 
 
-fn ctype(command: &str) -> usize {
+fn ctype(command: &str) -> CmdMode {
 
     match command {
-        "display"  => MODE_STR,
-        "display1" => MODE_STR,
-        "display2" => MODE_STR,
-        "product_type" => MODE_STR,
-        "product_version" => MODE_STR,
-        "tc_version" => MODE_STR,
-        "display_size" => MODE_EOL,
-        "display_update" => MODE_EOL,
-        "power" => MODE_EOL,
-        "volume" => MODE_EOL,
-        "mute" => MODE_EOL,
-        "source" => MODE_EOL,
-        "tone" => MODE_EOL,
-        "bass" => MODE_EOL,
-        "treble" => MODE_EOL,
-        "balance" => MODE_EOL,
-        "speaker" => MODE_EOL,
-        "pcusb_class" => MODE_EOL,
-        "play_status" => MODE_EOL,
-        "dimmer" => MODE_EOL,
-        "freq" => MODE_EOL,
-        _ => MODE_EOL
+        "00:power_off" => CmdMode::PWR,
+        "00:power_on" => CmdMode::PWR,
+        "display"  => CmdMode::STR,
+        "display1" => CmdMode::STR,
+        "display2" => CmdMode::STR,
+        "product_type" => CmdMode::STR,
+        "product_version" => CmdMode::STR,
+        "tc_version" => CmdMode::STR,
+        "display_size" => CmdMode::EOL,
+        "display_update" => CmdMode::EOL,
+        "power" => CmdMode::EOL,
+        "volume" => CmdMode::EOL,
+        "mute" => CmdMode::EOL,
+        "source" => CmdMode::EOL,
+        "tone" => CmdMode::EOL,
+        "bass" => CmdMode::EOL,
+        "treble" => CmdMode::EOL,
+        "balance" => CmdMode::EOL,
+        "speaker" => CmdMode::EOL,
+        "pcusb_class" => CmdMode::EOL,
+        "play_status" => CmdMode::EOL,
+        "dimmer" => CmdMode::EOL,
+        "freq" => CmdMode::EOL,
+        _ => CmdMode::EOL
 
     }
 
