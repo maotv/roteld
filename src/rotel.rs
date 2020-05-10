@@ -210,8 +210,8 @@ pub fn rotel_command_thread(fd: RawFd, rx: Receiver<RotelCommand>) -> () {
          TTYPort::from_raw_fd(fd)
     };
 
-    port.write_all("power_on!".as_bytes()).and_then(|_| port.flush()).unwrap_or(());
-    port.write_all(&"pc_usb!".as_bytes()).and_then(|_| port.flush()).unwrap_or(());
+//    port.write_all("power_on!".as_bytes()).and_then(|_| port.flush()).unwrap_or(());
+//    port.write_all(&"pc_usb!".as_bytes()).and_then(|_| port.flush()).unwrap_or(());
     port.write_all(&"get_volume!".as_bytes()).and_then(|_| port.flush()).unwrap_or(());
 
     // last volume value sent to rotel
@@ -354,6 +354,7 @@ pub fn parse_rotel_volume(v: &String) -> i64 {
 
 fn process_one(rv: &mut UnitResponse, c: u8) {
 
+    println!("[C] {}", c as char);
     match rv.state {
         STATE_WAITFOR => wait_for_character(rv, c),
         STATE_VARNAME => read_var_name(rv, c),
@@ -387,6 +388,7 @@ fn read_var_name(rv: &mut UnitResponse, c: u8)  {
     } else if c as char == '!'  {
         // WARN: invalid command name
         println!("WARN: invalid command name {}", rv.name);
+            rv.state = STATE_DONE;
     } else {
         rv.name.push(c as char);
     }

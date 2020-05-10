@@ -81,23 +81,24 @@ fn main() {
 
 
         let txc = tx_event.clone();
-        thread::spawn(move || {
-            Volumio::connect(&setup.volumio_url /*"ws://127.0.0.1:3000/socket.io/?EIO=3&transport=websocket"*/, txc);
-        });
+
+//        thread::spawn(move || {
+//            Volumio::connect(&setup.volumio_url /*"ws://127.0.0.1:3000/socket.io/?EIO=3&transport=websocket"*/, txc);
+//        });
 
         let txc = tx_event.clone();
-        thread::spawn(move || {
-            SocketSerial::listen("0.0.0.0:8989", txc);
-        });
+//        thread::spawn(move || {
+//            SocketSerial::listen("0.0.0.0:8989", txc);
+//        });
 
 
         let txc = tx_event.clone();
-        thread::spawn(move || {
-            loop {
-                thread::sleep(Duration::from_millis(23000));
-                check(txc.send(Event::VolumioPing));
-            }
-        });
+//        thread::spawn(move || {
+//            loop {
+//                thread::sleep(Duration::from_millis(23000));
+//                check(txc.send(Event::VolumioPing));
+//            }
+//        });
 
 
 
