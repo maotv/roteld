@@ -210,8 +210,11 @@ pub fn rotel_is_adjusting() -> bool {
     ROTEL_IS_ADJUSTING_VALUE.load(Ordering::Relaxed)
 }
 
-
-
+fn write_command(port: &mut TTYPort, cmd: &str) {
+    if let Err(e) = port.write_all(cmd.as_bytes()).and_then(|_| port.flush()) {
+        warn!("cannot write to port: {:?}", e)
+    }
+}
 
 
 pub fn rotel_command_thread(fd: RawFd, rx: Receiver<RotelCommand>) -> () {
@@ -237,11 +240,15 @@ pub fn rotel_command_thread(fd: RawFd, rx: Receiver<RotelCommand>) -> () {
          TTYPort::from_raw_fd(fd)
     };
 
-//    port.write_all("power_on!".as_bytes()).and_then(|_| port.flush()).unwrap_or(());
-//    port.write_all(&"pc_usb!".as_bytes()).and_then(|_| port.flush()).unwrap_or(());
-    port.write_all(&"get_product_type!".as_bytes()).and_then(|_| port.flush()).unwrap_or(());
-    port.write_all(&"get_current_power!".as_bytes()).and_then(|_| port.flush()).unwrap_or(());
-    port.write_all(&"get_volume!".as_bytes()).and_then(|_| port.flush()).unwrap_or(());
+    write_command(&mut port, "get_product_type!");
+    write_command(&mut port, "get_current_power!");
+    write_command(&mut port, "get_volume!");
+
+// //    port.write_all("power_on!".as_bytes()).and_then(|_| port.flush()).unwrap_or(());
+// //    port.write_all(&"pc_usb!".as_bytes()).and_then(|_| port.flush()).unwrap_or(());
+//     port.write_all(&"get_product_type!".as_bytes()).and_then(|_| port.flush()).unwrap_or(());
+//     port.write_all(&"get_current_power!".as_bytes()).and_then(|_| port.flush()).unwrap_or(());
+//     port.write_all(&"get_volume!".as_bytes()).and_then(|_| port.flush()).unwrap_or(());
 
     // last volume value sent to rotel
     let mut rotel_volume_sent     = 0;
