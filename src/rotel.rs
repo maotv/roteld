@@ -93,6 +93,7 @@ enum CmdMode {
 
 pub enum RotelCommand {
     Target(i64),
+    PowerState(usize),
     Received(i64),
     Command(String)
 }
@@ -226,6 +227,7 @@ pub fn rotel_command_thread(fd: RawFd, rx: Receiver<RotelCommand>) -> () {
         loop {
             match rx.try_recv() {
                 Ok(RotelCommand::Target(v)) => println!("    (Dummy) Set target: {}", v),
+                Ok(RotelCommand::PowerState(v)) => println!("    (Dummy) Power: {}", v),
                 Ok(RotelCommand::Received(v)) => println!("    (Dummy) Volume: {}", v),
                 Ok(RotelCommand::Command(s)) => println!("    (Dummy) Command Event ({})", s),
                 Err(TryRecvError::Empty) => (),
@@ -240,9 +242,12 @@ pub fn rotel_command_thread(fd: RawFd, rx: Receiver<RotelCommand>) -> () {
          TTYPort::from_raw_fd(fd)
     };
 
-    write_command(&mut port, "get_product_type!");
+    thread::sleep(Duration::from_millis(1000));
+
+    write_command(&mut port, "display_update_manual!");
+    // write_command(&mut port, "get_product_type!");
     write_command(&mut port, "get_current_power!");
-    write_command(&mut port, "get_volume!");
+    // write_command(&mut port, "get_volume!");
 
 // //    port.write_all("power_on!".as_bytes()).and_then(|_| port.flush()).unwrap_or(());
 // //    port.write_all(&"pc_usb!".as_bytes()).and_then(|_| port.flush()).unwrap_or(());
@@ -270,6 +275,11 @@ pub fn rotel_command_thread(fd: RawFd, rx: Receiver<RotelCommand>) -> () {
                     rotel_volume_sent = rotel_volume_received; // initialize sent.
                 }
                 ROTEL_IS_ADJUSTING_VALUE.store(true, Ordering::Relaxed);
+            },
+
+            Ok(RotelCommand::PowerState(p)) => {
+                println!("    Power State: {}", p);
+                // rotel_volume_received = v;
             },
 
             Ok(RotelCommand::Received(v)) => {
@@ -497,6 +507,8 @@ fn ctype(command: &str) -> CmdMode {
     match command {
         "00:power_off" => CmdMode::PWR,
         "00:power_on" => CmdMode::PWR,
+        "power_off" => CmdMode::PWR,
+        "power_on" => CmdMode::PWR,
         "display"  => CmdMode::STR,
         "display1" => CmdMode::STR,
         "display2" => CmdMode::STR,
