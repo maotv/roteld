@@ -13,34 +13,23 @@ use std::time::Duration;
 use log::{info,debug,warn,error};
 
 mod common;
-mod rwc; // rotel-web-client
+// mod rwc; // rotel-web-client
 mod volumio;
 mod rotel;
 
 use volumio::Volumio;
 use common::Event;
-use rotel::Rotel;
-use rotel::RotelCommand;
-use rwc::SocketSerial;
+use rotel::RotelDevice;
+use rotel::RotelEvent;
+
 
 use std::fs::File;
 use std::io::Read;
 
 use env_logger::Env;
 
-const ROTEL_VOLUME_MIN: i64 = 1;
-const ROTEL_VOLUME_MAX: i64 = 72;
-
 const VOLUMIO_VOLUME_MIN: i64 = 0;
 const VOLUMIO_VOLUME_MAX: i64 = 100;
-
-fn normal_volume(min: i64, max: i64, value: i64) -> f64 {
-    ((value - min) as f64 / (max - min) as f64).max(0.0).min(1.0)
-}
-
-fn device_volume(min: i64, max: i64, value: f64) ->i64 {
-    ((value  * (max-min) as f64) + min as f64 ) as i64
-}
 
 
 #[derive(Deserialize)]
@@ -74,7 +63,7 @@ fn main() {
     let (tx_event, rx_event) = mpsc::channel();
     let (tx_command, rx_command) = mpsc::channel();
 
-    let mut amp: Rotel = Rotel::new(&setup.rotel_serial);
+    let mut amp = RotelDevice::new(&setup.rotel_serial);
 
     let txc = tx_event.clone();
     amp.start(txc, rx_command);
@@ -126,7 +115,7 @@ fn main() {
 
                     rwc_out = rwc_out.map( |out| {
                         println!("[Rotel] pass serial message to rwc");
-                        if ur.name == "display" {
+                        if ur.key == "display" {
                             check(out.send(format!("{} \"D\": \"{}\" {}","{", &ur.raw[..20], "}")));
                             check(out.send(format!("{} \"D\": \"{}\" {}","{", &ur.raw[20..], "}")));
                         } else {
@@ -136,35 +125,24 @@ fn main() {
                     });
 
 
-                    if ur.name == "volume" {
+                    if ur.key == "volume" {
 
-                        let rotvol = rotel::parse_rotel_volume(&ur.value);
-                        // println!("[Main   ] Rotel Event: Volume {}", rotvol);
-                        check(tx_command.send(RotelCommand::Received(rotvol)));
-
-                        if !rotel::rotel_is_adjusting() {
-                            rotel::rotel_knob_set_timestamp();
-                        }
-
-                        if rotel::rotel_knob_is_turning() {
-                            println!("[Main   ] (set.) Rotel => Volumio {}", rotvol);
-                            //rotel_target_volume  = rvr;
-                            //rotel_current_volume = rvr;
-                            let vnorm = normal_volume(ROTEL_VOLUME_MIN, ROTEL_VOLUME_MAX, rotvol);
-                            volumio_current_volume = device_volume(VOLUMIO_VOLUME_MIN, VOLUMIO_VOLUME_MAX, vnorm);
-                            volumio_sender = volumio_sender.map( |out| {
-                                check(out.send(format!("429[\"volume\", {}]", volumio_current_volume)));
-                                out
-                            });
-                        } else {
-                            // ??? rotel_current_volume = rotvol;
-                            println!("[Main   ] (ign.) Rotel => Volumio {}", rotvol);
-                        }
                     } else {
-                        println!("[Main   ] Rotel Event: Other {} = {}", ur.name, ur.value);
+                        println!("[Main   ] Rotel Event: Other {} = {}", ur.key, ur.value);
                     }
 
                 }, 
+
+                Ok(Event::RotelNormVolume(v)) => {
+
+                    volumio_current_volume = common::device_volume(VOLUMIO_VOLUME_MIN, VOLUMIO_VOLUME_MAX, v);
+                    volumio_sender = volumio_sender.map( |out| {
+                        check(out.send(format!("429[\"volume\", {}]", volumio_current_volume)));
+                        out
+                    });
+
+                },
+
 
                 Ok(Event::VolumioState(ps)) => {
                     
@@ -178,9 +156,8 @@ fn main() {
                             println!("[Main   ] (ign.) Volumio Event, Volume is {} (was: {})", ps_volume, volumio_current_volume);
                         } else {
                             println!("[Main   ] (set.) Volumio Event, Volume is {} (was: {})", ps_volume, volumio_current_volume);
-                            let vnorm = normal_volume(VOLUMIO_VOLUME_MIN, VOLUMIO_VOLUME_MAX, volumio_current_volume);
-                            let rotel_target_volume = device_volume(ROTEL_VOLUME_MIN, ROTEL_VOLUME_MAX, vnorm);
-                            check(tx_command.send(RotelCommand::Target(rotel_target_volume)));
+                            let vnorm = common::normal_volume(VOLUMIO_VOLUME_MIN, VOLUMIO_VOLUME_MAX, volumio_current_volume);
+                            check(tx_command.send(RotelEvent::VolumeTarget(vnorm)));
                         }
 
 
@@ -192,7 +169,7 @@ fn main() {
 
                 Ok(Event::SerialData(msg)) => {
                     println!("[Main   ] Serial Event ({})", msg);
-                    check(tx_command.send(RotelCommand::Command(msg)));
+                    check(tx_command.send(RotelEvent::Command(msg)));
                 },
 
                 Ok(Event::SocketSerialBroadcaster(snd)) => {

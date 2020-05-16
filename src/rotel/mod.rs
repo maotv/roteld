@@ -2,6 +2,7 @@
 extern crate serialport;
 extern crate ws;
 
+
 // #[macro_use]
 // extern crate serde_derive;
 
@@ -9,12 +10,15 @@ extern crate ws;
 extern crate serde_json;
 
 
+// mod rwc;
+mod protocol;
+
 use log::{debug,warn,error};
 // use ws::{Handler, Handshake, Result, Message};
 // use ws::Error as WsError;
 
 // use serde_json::Value;
-
+use std::sync::mpsc;
 
 use std::thread;
 use std::io::{Read, Write};
@@ -44,11 +48,8 @@ use serialport::prelude::*;
 use serialport::posix::TTYPort;
 
 
-use crate::common::Event;
-use crate::common::KeyValueRaw;
+use crate::common::*;
 
-const ROTEL_VOLUME_ABSMIN: i64 = 0;
-const ROTEL_VOLUME_ABSMAX: i64 = 96;
 
 
 // const MODE_EOL: usize = 0; // variable value is terminated with ! 
@@ -71,32 +72,32 @@ static ROTEL_POWER_STATE:   AtomicUsize = AtomicUsize::new(0); //  ATOMIC_BOOL_I
 static ROTEL_IS_ADJUSTING_VALUE:   AtomicBool = AtomicBool::new(false); //  ATOMIC_BOOL_INIT;
 static ROTEL_KNOB_TIMESTAMP_VALUE: AtomicUsize = AtomicUsize::new(0); // ATOMIC_USIZE_INIT;
 
+const ROTEL_VOLUME_ABSMIN: i64 = 0;
+const ROTEL_VOLUME_ABSMAX: i64 = 96;
 
-enum ParserState {
+const ROTEL_VOLUME_LIMIT: i64 = 72;
 
-    WAITFOR, // wait for a ascii (non-control-) character on the stream
-    VARNAME, // read the variable name in a somename=someval! construct
-    LENGTH,  // 
-    NCHARS,
-    READEOL, // read until !
-    DONE     // done reading one command
-    // IGNORE   // done reading but ignore the result
+
+
+
+pub enum RotelEvent {
+    VolumeTarget(f64),
+    Response(KeyValueRaw),
+    Command(String),
+
+    // Target(i64),
+    // PowerState(usize),
+    // Received(i64),
+    // Command(String)
 }
 
 
-enum CmdMode {
-    EOL, // variable value is terminated with ! 
-    STR, // variable is given as ###,some text where ### is text length
-    PWR  // special case "00:power_off!"
+pub enum RotelMessage {
+
+
 }
 
 
-pub enum RotelCommand {
-    Target(i64),
-    PowerState(usize),
-    Received(i64),
-    Command(String)
-}
 
 
 /*
@@ -104,42 +105,32 @@ struct RotelState {
     power: bool,
 }
 */
-struct UnitResponse {
-    state: ParserState,
-    count: usize,
-    name:  String,
-    slen:  String,
-    value: String,
-    raw: String
-}
 
 
 
-impl UnitResponse {
 
-    fn new() -> UnitResponse {
-        UnitResponse { 
-            state: ParserState::WAITFOR, 
-            count: 0, 
-            slen: String::new(), 
-            name:  String::new(), 
-            value: String::new(), 
-            raw: String::new()  
-        }
+
+
+fn parse_rotel_volume(v: &String) -> i64 {
+    if v == "min" {
+        ROTEL_VOLUME_ABSMIN
+    } else if v == "max" {
+        ROTEL_VOLUME_ABSMAX
+    } else {
+        v.parse().unwrap()
     }
-
 }
 
 
 
-pub struct Rotel {
+pub struct RotelDevice {
     tty: Option<TTYPort>
 }
 
 
-impl  Rotel {
+impl RotelDevice {
 
-    pub fn new(serial: &str) -> Rotel {
+    pub fn new(serial: &str) -> RotelDevice {
 
         let port_name = String::from(serial); "/dev/ttyUSB0";
 
@@ -156,7 +147,7 @@ impl  Rotel {
 
 
         let optty = TTYPort::open(Path::new(&port_name), &settings).ok();
-        Rotel { tty: optty }
+        RotelDevice { tty: optty }
         
     }
 
@@ -168,23 +159,32 @@ impl  Rotel {
 
  
     
-    pub fn start(&mut self, tx: Sender<Event>, rx: Receiver<RotelCommand>) {
+    pub fn start(&mut self, tx: Sender<Event>, rx: Receiver<RotelEvent>) -> Sender<RotelEvent> {
 
         let port = match &self.tty {
             Some(p) => p.as_raw_fd(),
             None => 0
         };
 
+
+        let (revt_tx, revt_rx) = mpsc::channel();
+
         // let port = self.tty.unwrap_or(0).as_raw_fd();
         println!("port is open! #{}", port);
 
+
+        let revt_tx2 =  revt_tx.clone();
         thread::spawn(move || {
-            rotel_reader_thread(port, tx);
+            protocol::rotel_reader_thread(port,revt_tx2);
         });
 
+
         thread::spawn(move || {
-            rotel_command_thread(port, rx);
+            rotel_main_thread(port, tx, revt_rx);
         });
+
+
+        revt_tx
 
     }
 
@@ -218,7 +218,7 @@ fn write_command(port: &mut TTYPort, cmd: &str) {
 }
 
 
-pub fn rotel_command_thread(fd: RawFd, rx: Receiver<RotelCommand>) -> () {
+pub fn rotel_main_thread(fd: RawFd, tx: Sender<Event>, rx: Receiver<RotelEvent>) -> () {
 
     println!("rotel_command_thread with fd {}", fd);
 
@@ -226,10 +226,10 @@ pub fn rotel_command_thread(fd: RawFd, rx: Receiver<RotelCommand>) -> () {
     if fd == 0 {
         loop {
             match rx.try_recv() {
-                Ok(RotelCommand::Target(v)) => println!("    (Dummy) Set target: {}", v),
-                Ok(RotelCommand::PowerState(v)) => println!("    (Dummy) Power: {}", v),
-                Ok(RotelCommand::Received(v)) => println!("    (Dummy) Volume: {}", v),
-                Ok(RotelCommand::Command(s)) => println!("    (Dummy) Command Event ({})", s),
+                Ok(RotelEvent::VolumeTarget(v)) => println!("    (Dummy) Set target: {}", v),
+                // Ok(RotelEvent::PowerState(v)) => println!("    (Dummy) Power: {}", v),
+                Ok(RotelEvent::Response(v)) => println!("    (Dummy) Response: {} => {}", v.key, v.value),
+                Ok(RotelEvent::Command(s)) => println!("    (Dummy) Command Event ({})", s),
                 Err(TryRecvError::Empty) => (),
                 Err(TryRecvError::Disconnected) =>  println!("    (Dummy) Disconnected")
             }
@@ -268,25 +268,62 @@ pub fn rotel_command_thread(fd: RawFd, rx: Receiver<RotelCommand>) -> () {
     
         match rx.try_recv() {
 
-            Ok(RotelCommand::Target(v)) => {
+            // set a new volume target and start adjusting
+            Ok(RotelEvent::VolumeTarget(v)) => {
                 println!("    Set target: {}", v);
-                rotel_volume_target = v;
+
+                rotel_volume_target = device_volume(ROTEL_VOLUME_ABSMIN, ROTEL_VOLUME_LIMIT, v);
                 if !rotel_is_adjusting() {
                     rotel_volume_sent = rotel_volume_received; // initialize sent.
                 }
                 ROTEL_IS_ADJUSTING_VALUE.store(true, Ordering::Relaxed);
             },
 
-            Ok(RotelCommand::PowerState(p)) => {
-                println!("    Power State: {}", p);
+            // response/message from amplifier
+            Ok(RotelEvent::Response(p)) => {
+                
+                match p.key.as_str() {
+                    "display" => (),
+
+                    "volume" => {
+
+                        let rotvol = parse_rotel_volume(&p.value);
+                        // println!("[Main   ] Rotel Event: Volume {}", rotvol);
+                        // check(tx_command.send(RotelEvent::Received(rotvol)));
+
+                        if !rotel_is_adjusting() {
+                            rotel_knob_set_timestamp();
+                        }
+
+                        if rotel_knob_is_turning() {
+                            println!("[Main   ] (set.) Rotel => Volumio {}", rotvol);
+                            //rotel_target_volume  = rvr;
+                            //rotel_current_volume = rvr;
+                            let vnorm = normal_volume(ROTEL_VOLUME_ABSMIN, ROTEL_VOLUME_LIMIT, rotvol);
+                            tx.send(Event::RotelNormVolume(vnorm));
+
+                        } else {
+                            // ??? rotel_current_volume = rotvol;
+                            println!("[Main   ] (ign.) Rotel => Volumio {}", rotvol);
+                        }
+
+
+
+
+                    },
+                    _ => ()
+                }
+
+
+//                 println!("    Power State: {}", p);
                 // rotel_volume_received = v;
             },
 
-            Ok(RotelCommand::Received(v)) => {
-                rotel_volume_received = v;
-            },
+            // Ok(RotelEvent::Received(v)) => {
+            //     rotel_volume_received = v;
+            // },
 
-            Ok(RotelCommand::Command(s)) => {
+            Ok(RotelEvent::Command(s)) => {
                 println!("[rotel ] Command Event ({})", s);
                 if let Err(e) = port.write_all(&s.as_bytes()) {
                     error!("[rotel ] Error ({:?})", e);
@@ -345,195 +382,5 @@ pub fn rotel_command_thread(fd: RawFd, rx: Receiver<RotelCommand>) -> () {
 }
 
 
-
-pub fn rotel_reader_thread(fd: RawFd, tx: Sender<Event>) -> () {
-    
-    println!("rotel_reader_thread with fd {}", fd);
-
-    // do nothing if there is no port exept keeping messaging open.
-    if fd == 0 {
-        warn!("no serial port, will idle");
-        loop {
-            thread::sleep(Duration::from_millis(7000));
-        }
-    }
-
-
-    let mut port: TTYPort = unsafe {  
-         TTYPort::from_raw_fd(fd)
-    };
-
-    let mut ures = UnitResponse::new(); 
-    let mut serial_buf: Vec<u8> = vec![0; 1000];
-
-    loop {
-
-        if let Ok(t) = port.read(serial_buf.as_mut_slice()) {
-            
-            for c in serial_buf[..t].iter() {
-
-                process_one(&mut ures, *c);
-
-                if let ParserState::DONE = ures.state {
-                    println!("[Rotel  ] Message: [{}] = \"{}\"", ures.name, ures.value);
-                    if ures.name.len() > 1 {
-                        tx.send(Event::RotelMessage( KeyValueRaw { name: ures.name, value: ures.value, raw: ures.raw } )).unwrap();
-                    } else {
-                        debug!("[Rotel  ] Ignoring message due to insufficient length");
-                    }
-                    // reset the state machine
-                    ures = UnitResponse::new(); 
-                }
-            }
-
-        }
-    }
-}
-
-
-
-pub fn parse_rotel_volume(v: &String) -> i64 {
-    if v == "min" {
-        ROTEL_VOLUME_ABSMIN
-    } else if v == "max" {
-        ROTEL_VOLUME_ABSMAX
-    } else {
-        v.parse().unwrap()
-    }
-}
-
-
-fn process_one(rv: &mut UnitResponse, c: u8) {
-
-    if  c > 32 && c < 127  {
-        println!("[C] {}", c as char);
-    } else {
-        println!("[C] #{}", c);
-    }
-
-    match rv.state {
-        ParserState::WAITFOR => wait_for_character(rv, c),
-        ParserState::VARNAME => read_var_name(rv, c),
-        ParserState::LENGTH  => read_length(rv, c),
-        ParserState::NCHARS  => read_n_chars(rv, c),
-        ParserState::READEOL => read_to_eol(rv, c),
-        _ => ()
-    }
-
-}
-
-fn wait_for_character(rv: &mut UnitResponse, c: u8)  {
-    if  c > 32 && c < 127  {
-        rv.state = ParserState::VARNAME;
-        read_var_name(rv, c);
-    }
-}
-
-
-fn read_var_name(rv: &mut UnitResponse, c: u8)  {
-
-    rv.raw.push(c as char);
-
-    if  c as char == '='  {
-        match ctype(&rv.name) {
-            CmdMode::EOL => rv.state = ParserState::READEOL,
-            CmdMode::STR => rv.state = ParserState::LENGTH,
-            CmdMode::PWR => rv.state = ParserState::DONE
-        }
-
-        // println!("VARNAME => {} is {}", rv.name, ctype(&rv.name));
-        // if ctype(&rv.name) == MODE_EOL {
-        //     rv.state = STATE_READEOL;
-        // } else {
-        //     rv.state = STATE_LENGTH;
-        // }
-    } else if c as char == '!'  {
-        // WARN: invalid command name
-        // println!("WARN: invalid command name {}", rv.name);
-        rv.state = ParserState::DONE;
-    } else {
-        rv.name.push(c as char);
-    }
-
-}
-
-fn read_length(rv: &mut UnitResponse, c: u8)  {
-
-    rv.raw.push(c as char);
-
-    if c as char == ','  {
-        let len: usize = rv.slen.parse().expect("not a number");
-        // println!("LENGTH => {} = {}", rv.slen, len);
-        rv.state = ParserState::NCHARS;
-        rv.count = len;
-    } else {
-        rv.slen.push(c as char);
-    }
-
-}
-
-fn read_n_chars(rv: &mut UnitResponse, c: u8)  {
-
-    rv.raw.push(c as char);
-
-    if rv.count > 0 {
-        rv.value.push(c as char);
-        rv.count = rv.count-1;
-    } 
-
-    if rv.count == 0 {
-        // println!("VALUE => {} is {}", rv.name, rv.value);
-        rv.state = ParserState::DONE;
-    }
-
-}
-
-fn read_to_eol(rv: &mut UnitResponse, c: u8)  {
-
-    rv.raw.push(c as char);
-
-    if c as char == '!' {
-        // println!("VALUE => {} is {}", rv.name, rv.value);
-        rv.state = ParserState::DONE;
-    } else {
-        rv.value.push(c as char);
-    }
-
-}
-
-
-fn ctype(command: &str) -> CmdMode {
-
-    match command {
-        "00:power_off" => CmdMode::PWR,
-        "00:power_on" => CmdMode::PWR,
-        "power_off" => CmdMode::PWR,
-        "power_on" => CmdMode::PWR,
-        "display"  => CmdMode::STR,
-        "display1" => CmdMode::STR,
-        "display2" => CmdMode::STR,
-        "product_type" => CmdMode::STR,
-        "product_version" => CmdMode::STR,
-        "tc_version" => CmdMode::STR,
-        "display_size" => CmdMode::EOL,
-        "display_update" => CmdMode::EOL,
-        "power" => CmdMode::EOL,
-        "volume" => CmdMode::EOL,
-        "mute" => CmdMode::EOL,
-        "source" => CmdMode::EOL,
-        "tone" => CmdMode::EOL,
-        "bass" => CmdMode::EOL,
-        "treble" => CmdMode::EOL,
-        "balance" => CmdMode::EOL,
-        "speaker" => CmdMode::EOL,
-        "pcusb_class" => CmdMode::EOL,
-        "play_status" => CmdMode::EOL,
-        "dimmer" => CmdMode::EOL,
-        "freq" => CmdMode::EOL,
-        _ => CmdMode::EOL
-
-    }
-
-}
 
 

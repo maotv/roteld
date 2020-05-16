@@ -15,13 +15,13 @@ use std::sync::mpsc::Sender;
 use std::thread;
 
 use std::time::Duration;
-pub struct SocketSerial {
+pub struct XSocketSerial {
     pub out: ws::Sender,
     pub tx: mpsc::Sender<Event>
 }
 
 
-impl SocketSerial {
+impl XSocketSerial {
 
     pub fn listen(addr_spec: &'static str, tx: Sender<Event>) -> ()  {
 
@@ -29,7 +29,7 @@ impl SocketSerial {
 
             
             // loop {
-                let wstb = WebSocket::new( |out| SocketSerial { out: out, tx: tx.clone()  } ).unwrap();
+                let wstb = WebSocket::new( |out| XSocketSerial { out: out, tx: tx.clone()  } ).unwrap();
                 if let Err(e) = tx.send(Event::SocketSerialBroadcaster(wstb.broadcaster().clone())) {
                     println!("Error sending Event::SocketSerialBroadcaster {:?}",e);
                 }
@@ -61,7 +61,7 @@ impl SocketSerial {
 
 // We implement the Handler trait for Client so that we can get more
 // fine-grained control of the connection.
-impl Handler for SocketSerial {
+impl Handler for XSocketSerial {
 
     // `on_open` will be called only after the WebSocket handshake is successful
     // so at this point we know that the connection is ready to send/receive messages.
