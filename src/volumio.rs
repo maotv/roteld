@@ -84,14 +84,14 @@ impl Handler for Volumio {
     // and returns a `Result<()>`.
     fn on_message(&mut self, msg: Message) -> Result<()> {
         // Close the connection when we get a response from the server
-        // println!("[Volumio] {}", msg);
+        println!("[Volumio] {}", msg);
         let jstr: String = msg.into_text().unwrap();
         if jstr.starts_with("42[") {
 
             let mut state: Value = serde_json::from_str(&jstr[2..]).unwrap();
 
             if state[0] == "pushState" {
-                println!("Got 42: {}", jstr);
+                // println!("Got 42: {}", jstr);
                 let vstate: Value = state.as_array_mut().unwrap().remove(1);
                 self.tx.send(Event::VolumioState(vstate)).expect("cannot send volumio state");
 
