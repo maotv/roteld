@@ -50,7 +50,7 @@ impl Volumio {
         self.sender.send(format!("429[\"volume\", {}]", dvol));
     }
 
-    pub fn send_pong(&self) {
+    pub fn send_ping(&self) {
         self.sender.send("2");
     }
 

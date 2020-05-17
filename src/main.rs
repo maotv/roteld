@@ -69,11 +69,18 @@ fn main() {
 
     let mut volumio_current_volume = 0;
 
+    let tx_event_clone = tx_event.clone();
     thread::spawn(move || {
-        Volumio::connect(&setup.volumio_url, tx_event);
+        Volumio::connect(&setup.volumio_url, tx_event_clone);
     });
 
-
+    let tx_event_clone = tx_event.clone();
+    thread::spawn(move || {
+        loop {
+            thread::sleep(Duration::from_millis(23000));
+            check(tx_event_clone.send(Event::VolumioPing));
+        }
+    });
 
 
     loop {
@@ -100,7 +107,7 @@ fn main() {
             // }, 
 
             Ok(Event::VolumioNormVolume(v)) => {
-
+                to_rotel.send(RotelEvent::VolumeTarget(v));
             },
 
             Ok(Event::RotelNormVolume(v)) => {
@@ -109,7 +116,7 @@ fn main() {
                     out.send_norm_volume(v);
                     out
                 });
-                
+
                 // if let Some(vxol) = volumio {
                 //     vxol.send_norm_volume(v)
                 // }
@@ -130,7 +137,7 @@ fn main() {
             Ok(Event::VolumioPing) => {
                 volumio = volumio.map( |out| {
                     println!("[Volumio] send ping");
-                    out.send_pong();
+                    out.send_ping();
                     out
                 });
             },
