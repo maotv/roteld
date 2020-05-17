@@ -129,7 +129,7 @@ struct RotelState {
 
     device_volume: i64,
     target_volume: i64,
-
+    is_adjusting: bool,
     knob_timestamp: SystemTime,
 
 
@@ -139,8 +139,9 @@ impl RotelState {
 
     fn new() -> Self {
         RotelState {
-            device_volume: 0,
+            device_volume:  0,
             target_volume : 0,
+            is_adjusting: false,
             knob_timestamp: SystemTime::now()
         }
     }
@@ -157,9 +158,6 @@ impl RotelState {
         }
     }
 
-    fn volume_is_adjusting(&self) -> bool {
-        false
-    }
 }
 
 // pub fn rotel_knob_set_timestamp() {
@@ -316,7 +314,7 @@ pub fn rotel_main_thread(fd: RawFd, tx: Sender<Event>, rx: Receiver<RotelEvent>,
     // // 
     // let mut rotel_volume_target   = 0;
     //
-    let mut rotel_is_adjusting    = false;
+    // let mut rotel_is_adjusting    = false;
 
     loop {
     
@@ -327,18 +325,20 @@ pub fn rotel_main_thread(fd: RawFd, tx: Sender<Event>, rx: Receiver<RotelEvent>,
 
                 println!("    Set target: {}", v);
                 state.target_volume = device_volume(ROTEL_VOLUME_ABSMIN, ROTEL_VOLUME_LIMIT, v);
-                rotel_is_adjusting = true;
+                state.is_adjusting = true;
                 to_smooth.send(SmoothVolume::Adjust(state.device_volume, state.target_volume));
+
             },
 
             Ok(RotelEvent::VolumeAdjustmentRequest(v)) => {
+                info!("---------------------- vol adjust start");
                 let cmd = format!("volume_{}!", v);
                 write_command(&mut port, &cmd);
             },
 
             Ok(RotelEvent::VolumeAdjustmentDone) => {
-                info!("vol adjust done");
-                rotel_is_adjusting = false;
+                info!("---------------------- vol adjust done");
+                state.is_adjusting = false;
             },
 
 
@@ -351,13 +351,14 @@ pub fn rotel_main_thread(fd: RawFd, tx: Sender<Event>, rx: Receiver<RotelEvent>,
                     "volume" => {
 
                         let rotvol = parse_rotel_volume(&p.value);
+                        state.device_volume = rotvol;
                         // println!("[Rotel  ] Rotel Volume {}", rotvol);
                         // check(tx_command.send(RotelEvent::Received(rotvol)));
 
-                        if rotel_is_adjusting {
+                        if state.is_adjusting {
                             to_smooth.send(SmoothVolume::Current(rotvol));
                         } else {
-                            
+
                         }
 
 
