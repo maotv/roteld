@@ -358,21 +358,22 @@ pub fn rotel_main_thread(fd: RawFd, tx: Sender<Event>, rx: Receiver<RotelEvent>,
                         if state.is_adjusting {
                             to_smooth.send(SmoothVolume::Current(rotvol));
                         } else {
-
-                        }
-
-
-                        if state.knob_is_turning() {
-                            println!("[Main   ] (set.) Rotel => Volumio {}", rotvol);
-                            //rotel_target_volume  = rvr;
-                            //rotel_current_volume = rvr;
                             let vnorm = normal_volume(ROTEL_VOLUME_ABSMIN, ROTEL_VOLUME_LIMIT, rotvol);
                             tx.send(Event::RotelNormVolume(vnorm));
-
-                        } else {
-                            // ??? rotel_current_volume = rotvol;
-                            println!("[Rotel  ] (ign.) Rotel => Volumio {}", rotvol);
                         }
+
+
+                        // if state.knob_is_turning() {
+                        //     println!("[Main   ] (set.) Rotel => Volumio {}", rotvol);
+                        //     //rotel_target_volume  = rvr;
+                        //     //rotel_current_volume = rvr;
+                        //     let vnorm = normal_volume(ROTEL_VOLUME_ABSMIN, ROTEL_VOLUME_LIMIT, rotvol);
+                        //     tx.send(Event::RotelNormVolume(vnorm));
+
+                        // } else {
+                        //     // ??? rotel_current_volume = rotvol;
+                        //     println!("[Rotel  ] (ign.) Rotel => Volumio {}", rotvol);
+                        // }
 
 
 
