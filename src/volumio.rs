@@ -5,6 +5,9 @@ extern crate ws;
 use ws::{Handler, Handshake, Result, Message};
 use ws::Error as WsError;
 
+use log::{trace,info,warn,error};
+
+
 use serde_json::Value;
 
 use std::sync::mpsc;
@@ -47,6 +50,7 @@ impl Volumio {
     pub fn send_norm_volume(&self, vol: f64) {
 
         let dvol = device_volume(VOLUMIO_VOLUME_MIN, VOLUMIO_VOLUME_MAX, vol);
+        info!("send volume to volumio {}", dvol);
         self.sender.send(format!("429[\"volume\", {}]", dvol));
     }
 
