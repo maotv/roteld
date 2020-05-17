@@ -28,9 +28,6 @@ use std::io::Read;
 
 use env_logger::Env;
 
-const VOLUMIO_VOLUME_MIN: i64 = 0;
-const VOLUMIO_VOLUME_MAX: i64 = 100;
-
 
 #[derive(Deserialize)]
 struct Setup {
@@ -68,7 +65,8 @@ fn main() {
 
     let to_rotel = amp.start(tx_event.clone());
 
-    let mut volumio_sender: Option<ws::Sender> = None;
+    let mut volumio: Option<Volumio> = None;
+
     let mut volumio_current_volume = 0;
 
     thread::spawn(move || {
@@ -85,40 +83,54 @@ fn main() {
 
         match rx_event.recv() {
 
-            Ok(Event::VolumioState(ps)) => {
+            // Ok(Event::VolumioState(ps)) => {
                     
-                let ps_volume: i64 = ps["volume"].as_i64().unwrap();
+            //     let ps_volume: i64 = ps["volume"].as_i64().unwrap();
 
-                if ps_volume != volumio_current_volume {
+            //     if ps_volume != volumio_current_volume {
 
-                    volumio_current_volume = ps_volume;
-                    let vnorm = common::normal_volume(VOLUMIO_VOLUME_MIN, VOLUMIO_VOLUME_MAX, volumio_current_volume);
-                    check(to_rotel.send(RotelEvent::VolumeTarget(vnorm)));
+            //         volumio_current_volume = ps_volume;
+            //         let vnorm = common::normal_volume(VOLUMIO_VOLUME_MIN, VOLUMIO_VOLUME_MAX, volumio_current_volume);
+            //         check(to_rotel.send(RotelEvent::VolumeTarget(vnorm)));
 
-                } else {
-                    println!("[Main   ] Volumio Event, Volume unchanged ({})", ps_volume);
-                }
+            //     } else {
+            //         println!("[Main   ] Volumio Event, Volume unchanged ({})", ps_volume);
+            //     }
 
-            }, 
+            // }, 
+
+            Ok(Event::VolumioNormVolume(v)) => {
+
+            },
+
             Ok(Event::RotelNormVolume(v)) => {
 
-                volumio_current_volume = common::device_volume(VOLUMIO_VOLUME_MIN, VOLUMIO_VOLUME_MAX, v);
-                volumio_sender = volumio_sender.map( |out| {
-                    check(out.send(format!("429[\"volume\", {}]", volumio_current_volume)));
+                volumio = volumio.map( |out| {
+                    out.send_norm_volume(v);
                     out
                 });
+                
+                // if let Some(vxol) = volumio {
+                //     vxol.send_norm_volume(v)
+                // }
+
+                // volumio_current_volume = common::device_volume(VOLUMIO_VOLUME_MIN, VOLUMIO_VOLUME_MAX, v);
+                // volumio_sender = volumio_sender.map( |out| {
+                //     check(out.send(format!("429[\"volume\", {}]", volumio_current_volume)));
+                //     out
+                // });
 
             },
 
             Ok(Event::VolumioConnect(snd)) => {
 
-                volumio_sender = Some(snd);
+                volumio = Some(snd);
             },
 
             Ok(Event::VolumioPing) => {
-                volumio_sender = volumio_sender.map( |out| {
+                volumio = volumio.map( |out| {
                     println!("[Volumio] send ping");
-                    check(out.send("2"));
+                    out.send_pong();
                     out
                 });
             },

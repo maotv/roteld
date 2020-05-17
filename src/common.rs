@@ -17,10 +17,12 @@ pub enum Event {
 
     // RotelMessage(KeyValueRaw),
     RotelNormVolume(f64),
+    VolumioNormVolume(f64),
+
     VolumioState(Value),
     SerialData(String),
     SocketSerialBroadcaster(ws::Sender),
-    VolumioConnect(ws::Sender),
+    VolumioConnect(crate::volumio::Volumio),
     VolumioPing
 
 }
