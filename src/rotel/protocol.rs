@@ -132,11 +132,13 @@ pub fn rotel_reader_thread(fd: RawFd, tx: Sender<RotelEvent>) -> () {
 
 fn process_one(rv: &mut UnitResponse, c: u8) {
 
+/*
     if  c > 32 && c < 127  {
         println!("[C] {}", c as char);
     } else {
         println!("[C] #{}", c);
     }
+*/
 
     match rv.state {
         ParserState::WAITFOR => wait_for_character(rv, c),
