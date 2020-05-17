@@ -337,6 +337,7 @@ pub fn rotel_main_thread(fd: RawFd, tx: Sender<Event>, rx: Receiver<RotelEvent>,
             },
 
             Ok(RotelEvent::VolumeAdjustmentDone) => {
+                info!("vol adjust done");
                 rotel_is_adjusting = false;
             },
 
@@ -353,9 +354,12 @@ pub fn rotel_main_thread(fd: RawFd, tx: Sender<Event>, rx: Receiver<RotelEvent>,
                         // println!("[Rotel  ] Rotel Volume {}", rotvol);
                         // check(tx_command.send(RotelEvent::Received(rotvol)));
 
-                        if !state.volume_is_adjusting() {
-                            state.knob_touch()
+                        if rotel_is_adjusting {
+                            to_smooth.send(SmoothVolume::Current(rotvol));
+                        } else {
+                            
                         }
+
 
                         if state.knob_is_turning() {
                             println!("[Main   ] (set.) Rotel => Volumio {}", rotvol);
@@ -437,7 +441,7 @@ pub fn rotel_smooth_volume_thread(tx: Sender<RotelEvent>, rx: Receiver<SmoothVol
                         warn!("cannot send VolumeAdjustmentRequest +");
                     }
                 } else {
-                    trace!("No Adjustment");
+                    trace!("No Adjustment @ {}", rotel_volume_sent);
                 }
 
                 // check for new events
