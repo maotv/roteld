@@ -13,7 +13,7 @@ extern crate serde_json;
 // mod rwc;
 mod protocol;
 
-use log::{debug,warn,error};
+use log::{trace,info,warn,error};
 // use ws::{Handler, Handshake, Result, Message};
 // use ws::Error as WsError;
 
@@ -27,7 +27,7 @@ use std::io::{Read, Write};
 use std::sync::mpsc::{Sender,Receiver,TryRecvError};
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, Instant, UNIX_EPOCH};
 
 // use std::sync::mpsc::{Sender,Receiver};
 
@@ -67,22 +67,24 @@ const POWER_STATE_OFF: usize = 0;
 const POWER_STATE_STANDBY: usize = 1;
 const POWER_STATE_ON: usize = 2;
 
-static ROTEL_POWER_STATE:   AtomicUsize = AtomicUsize::new(0); //  ATOMIC_BOOL_INIT;
+// static ROTEL_POWER_STATE:   AtomicUsize = AtomicUsize::new(0); //  ATOMIC_BOOL_INIT;
 
-static ROTEL_IS_ADJUSTING_VALUE:   AtomicBool = AtomicBool::new(false); //  ATOMIC_BOOL_INIT;
-static ROTEL_KNOB_TIMESTAMP_VALUE: AtomicUsize = AtomicUsize::new(0); // ATOMIC_USIZE_INIT;
+// static ROTEL_IS_ADJUSTING_VALUE:   AtomicBool = AtomicBool::new(false); //  ATOMIC_BOOL_INIT;
+// static ROTEL_KNOB_TIMESTAMP_VALUE: AtomicUsize = AtomicUsize::new(0); // ATOMIC_USIZE_INIT;
 
 const ROTEL_VOLUME_ABSMIN: i64 = 0;
 const ROTEL_VOLUME_ABSMAX: i64 = 96;
 
 const ROTEL_VOLUME_LIMIT: i64 = 72;
 
+type VolumeTarget = i64;
 
-
-
+#[derive(Debug)]
 pub enum RotelEvent {
-    VolumeTarget(f64),
-    Response(KeyValueRaw),
+    VolumeTarget(f64),     // from volumio, this is the target volume level
+    VolumeAdjustmentRequest(i64), // from smmoth volume thread, forward to the amp
+    VolumeAdjustmentDone,
+    Response(KeyValueRaw), // from the amp
     Command(String),
 
     // Target(i64),
@@ -91,10 +93,10 @@ pub enum RotelEvent {
     // Command(String)
 }
 
-
-pub enum RotelMessage {
-
-
+pub enum SmoothVolume {
+    Adjust(i64, i64), // from, to
+    Current(i64),
+    Ignore
 }
 
 
@@ -120,6 +122,58 @@ fn parse_rotel_volume(v: &String) -> i64 {
         v.parse().unwrap()
     }
 }
+
+
+
+struct RotelState {
+
+    device_volume: i64,
+    target_volume: i64,
+
+    knob_timestamp: SystemTime,
+
+
+}
+
+impl RotelState {
+
+    fn new() -> Self {
+        RotelState {
+            device_volume: 0,
+            target_volume : 0,
+            knob_timestamp: SystemTime::now()
+        }
+    }
+
+    fn knob_touch(&mut self) {
+        self.knob_timestamp = SystemTime::now();
+    }
+
+    fn knob_is_turning(&self) -> bool { 
+        if let Ok(d) = SystemTime::now().duration_since(self.knob_timestamp) {
+            d.as_millis() < 3000
+        } else {
+            false
+        }
+    }
+
+    fn volume_is_adjusting(&self) -> bool {
+        false
+    }
+}
+
+// pub fn rotel_knob_set_timestamp() {
+//     ROTEL_KNOB_TIMESTAMP_VALUE.store(millis_since_epoch(), Ordering::Relaxed)
+// }
+
+// pub fn rotel_knob_is_turning() -> bool {
+//     (millis_since_epoch() - ROTEL_KNOB_TIMESTAMP_VALUE.load(Ordering::Relaxed)) < 3000
+// }
+
+
+// pub fn rotel_is_adjusting() -> bool {
+//     ROTEL_IS_ADJUSTING_VALUE.load(Ordering::Relaxed)
+// }
 
 
 
@@ -173,14 +227,20 @@ impl RotelDevice {
         println!("port is open! #{}", port);
 
 
+        let (smooth_tx,smooth_rx) = mpsc::channel();
+        let smooth_to_main =  revt_tx.clone();
+
+        thread::spawn(move || {
+            rotel_smooth_volume_thread(smooth_to_main, smooth_rx);
+        });
+
         let revt_tx2 =  revt_tx.clone();
         thread::spawn(move || {
             protocol::rotel_reader_thread(port,revt_tx2);
         });
 
-
         thread::spawn(move || {
-            rotel_main_thread(port, tx, revt_rx);
+            rotel_main_thread(port, tx, revt_rx, smooth_tx);
         });
 
 
@@ -198,18 +258,6 @@ fn millis_since_epoch() -> usize {
 }
 
 
-pub fn rotel_knob_set_timestamp() {
-    ROTEL_KNOB_TIMESTAMP_VALUE.store(millis_since_epoch(), Ordering::Relaxed)
-}
-
-pub fn rotel_knob_is_turning() -> bool {
-    (millis_since_epoch() - ROTEL_KNOB_TIMESTAMP_VALUE.load(Ordering::Relaxed)) < 3000
-}
-
-
-pub fn rotel_is_adjusting() -> bool {
-    ROTEL_IS_ADJUSTING_VALUE.load(Ordering::Relaxed)
-}
 
 fn write_command(port: &mut TTYPort, cmd: &str) {
     if let Err(e) = port.write_all(cmd.as_bytes()).and_then(|_| port.flush()) {
@@ -218,18 +266,19 @@ fn write_command(port: &mut TTYPort, cmd: &str) {
 }
 
 
-pub fn rotel_main_thread(fd: RawFd, tx: Sender<Event>, rx: Receiver<RotelEvent>) -> () {
+pub fn rotel_main_thread(fd: RawFd, tx: Sender<Event>, rx: Receiver<RotelEvent>, to_smooth: Sender<SmoothVolume>) -> () {
 
     println!("rotel_command_thread with fd {}", fd);
+
+    let mut state = RotelState::new();
+
+
 
     // do nothing without port
     if fd == 0 {
         loop {
             match rx.try_recv() {
-                Ok(RotelEvent::VolumeTarget(v)) => println!("    (Dummy) Set target: {}", v),
-                // Ok(RotelEvent::PowerState(v)) => println!("    (Dummy) Power: {}", v),
-                Ok(RotelEvent::Response(v)) => println!("    (Dummy) Response: {} => {}", v.key, v.value),
-                Ok(RotelEvent::Command(s)) => println!("    (Dummy) Command Event ({})", s),
+                Ok(ev) => println!("    (Dummy) Event: {:?}", ev),
                 Err(TryRecvError::Empty) => (),
                 Err(TryRecvError::Disconnected) =>  println!("    (Dummy) Disconnected")
             }
@@ -241,6 +290,11 @@ pub fn rotel_main_thread(fd: RawFd, tx: Sender<Event>, rx: Receiver<RotelEvent>)
     let mut port: TTYPort = unsafe {  
          TTYPort::from_raw_fd(fd)
     };
+
+
+
+
+
 
     thread::sleep(Duration::from_millis(1000));
 
@@ -255,14 +309,14 @@ pub fn rotel_main_thread(fd: RawFd, tx: Sender<Event>, rx: Receiver<RotelEvent>)
 //     port.write_all(&"get_current_power!".as_bytes()).and_then(|_| port.flush()).unwrap_or(());
 //     port.write_all(&"get_volume!".as_bytes()).and_then(|_| port.flush()).unwrap_or(());
 
-    // last volume value sent to rotel
-    let mut rotel_volume_sent     = 0;
-    // 
-    let mut rotel_volume_received = 0;
-    // 
-    let mut rotel_volume_target   = 0;
+    // // last volume value sent to rotel
+    // let mut rotel_volume_sent     = 0;
+    // // 
+    // let mut rotel_volume_received = 0;
+    // // 
+    // let mut rotel_volume_target   = 0;
     //
-    // let mut rotel_is_adjusting    = false;
+    let mut rotel_is_adjusting    = false;
 
     loop {
     
@@ -270,32 +324,40 @@ pub fn rotel_main_thread(fd: RawFd, tx: Sender<Event>, rx: Receiver<RotelEvent>)
 
             // set a new volume target and start adjusting
             Ok(RotelEvent::VolumeTarget(v)) => {
-                println!("    Set target: {}", v);
 
-                rotel_volume_target = device_volume(ROTEL_VOLUME_ABSMIN, ROTEL_VOLUME_LIMIT, v);
-                if !rotel_is_adjusting() {
-                    rotel_volume_sent = rotel_volume_received; // initialize sent.
-                }
-                ROTEL_IS_ADJUSTING_VALUE.store(true, Ordering::Relaxed);
+                println!("    Set target: {}", v);
+                state.target_volume = device_volume(ROTEL_VOLUME_ABSMIN, ROTEL_VOLUME_LIMIT, v);
+                rotel_is_adjusting = true;
+                to_smooth.send(SmoothVolume::Adjust(state.device_volume, state.target_volume));
             },
+
+            Ok(RotelEvent::VolumeAdjustmentRequest(v)) => {
+                let cmd = format!("volume_{}!", v);
+                write_command(&mut port, &cmd);
+            },
+
+            Ok(RotelEvent::VolumeAdjustmentDone) => {
+                rotel_is_adjusting = false;
+            },
+
 
             // response/message from amplifier
             Ok(RotelEvent::Response(p)) => {
-                
+
                 match p.key.as_str() {
                     "display" => (),
 
                     "volume" => {
 
                         let rotvol = parse_rotel_volume(&p.value);
-                        // println!("[Main   ] Rotel Event: Volume {}", rotvol);
+                        // println!("[Rotel  ] Rotel Volume {}", rotvol);
                         // check(tx_command.send(RotelEvent::Received(rotvol)));
 
-                        if !rotel_is_adjusting() {
-                            rotel_knob_set_timestamp();
+                        if !state.volume_is_adjusting() {
+                            state.knob_touch()
                         }
 
-                        if rotel_knob_is_turning() {
+                        if state.knob_is_turning() {
                             println!("[Main   ] (set.) Rotel => Volumio {}", rotvol);
                             //rotel_target_volume  = rvr;
                             //rotel_current_volume = rvr;
@@ -304,7 +366,7 @@ pub fn rotel_main_thread(fd: RawFd, tx: Sender<Event>, rx: Receiver<RotelEvent>)
 
                         } else {
                             // ??? rotel_current_volume = rotvol;
-                            println!("[Main   ] (ign.) Rotel => Volumio {}", rotvol);
+                            println!("[Rotel  ] (ign.) Rotel => Volumio {}", rotvol);
                         }
 
 
@@ -335,52 +397,157 @@ pub fn rotel_main_thread(fd: RawFd, tx: Sender<Event>, rx: Receiver<RotelEvent>)
             
         }
 
-        if rotel_is_adjusting() {
-            if rotel_volume_received == rotel_volume_target {
-
-                // this is it. no mor adjusting necessary
-                ROTEL_IS_ADJUSTING_VALUE.store(false, Ordering::Relaxed);
-                println!("    Done.");
-
-            } else {
-
-
-                if rotel_volume_sent == rotel_volume_target {
-
-                    // no more updates needed.
-                    println!("    Waiting for confirmation: sent: {} received: {} target: {}", rotel_volume_sent, rotel_volume_received, rotel_volume_target);
-                    let rotel_command = format!("volume_{}!", rotel_volume_sent);
-                    println!("    Send2: {}", rotel_command);
-                    if let Err(e) = port.write_all(&rotel_command.as_bytes()) {
-                        println!("    Send2: Error ({:?})", e);
-                    }
-
-                } else {
-
-                    rotel_volume_sent = rotel_volume_sent + (rotel_volume_target-rotel_volume_sent).signum();
-                    let rotel_command = format!("volume_{}!", rotel_volume_sent);
-                    println!("    Send1: {}", rotel_command);
-                    // set on rotel device
-                    if let Err(e) = port.write_all(&rotel_command.as_bytes()) {
-                        println!("    Send1: Error ({:?})", e);
-                    }
-
-                }
-
-
-
-            }
-        }
-    
-        thread::sleep(Duration::from_millis(30));
-
     }
 
+}
 
+
+
+pub fn rotel_smooth_volume_thread(tx: Sender<RotelEvent>, rx: Receiver<SmoothVolume>) {
+
+    let mut rotel_volume_target   = 0;
+    let mut rotel_volume_sent     = 0;
+    let mut rotel_volume_received = 0;
+
+    loop {
+
+        let recv = rx.recv().unwrap_or(SmoothVolume::Ignore);
+        if let SmoothVolume::Adjust(current, next_target) = recv {
+
+            info!("Starting smooth adjustment from {} to {}", current, next_target);
+
+            let adjustment_start = Instant::now();
+            rotel_volume_target = next_target;
+            rotel_volume_received = current;
+            rotel_volume_sent = current;
+
+            while  rotel_volume_received != rotel_volume_target 
+                && Instant::now().duration_since(adjustment_start).as_millis() < 3000 {
+    
+                if rotel_volume_sent > rotel_volume_target {
+                    rotel_volume_sent -= 1;
+                    trace!("Dn Adjustment => {}", rotel_volume_sent);
+                    if let Err(e) = tx.send(RotelEvent::VolumeAdjustmentRequest(rotel_volume_sent)) {
+                        warn!("cannot send VolumeAdjustmentRequest -");
+                    }
+                } else if rotel_volume_sent < rotel_volume_target {
+                    rotel_volume_sent += 1;
+                    trace!("Up Adjustment => {}", rotel_volume_sent);
+                    if let Err(e) = tx.send(RotelEvent::VolumeAdjustmentRequest(rotel_volume_sent)) {
+                        warn!("cannot send VolumeAdjustmentRequest +");
+                    }
+                } else {
+                    trace!("No Adjustment");
+                }
+
+                // check for new events
+                match rx.try_recv().unwrap_or(SmoothVolume::Ignore) {
+                    SmoothVolume::Adjust(c,v) => rotel_volume_target   = v,
+                    SmoothVolume::Current(v)  => rotel_volume_received = v,
+                    _ => ()
+                }
+
+                thread::sleep(Duration::from_millis(40));
+            }
+        
+            tx.send(RotelEvent::VolumeAdjustmentDone);
+
+        } else {
+            warn!("should not happen ???");
+            thread::sleep(Duration::from_millis(3000));
+        }
+
+
+    }
 
 
 }
 
 
 
+
+
+
+
+
+
+// if rotel_volume_received == rotel_volume_target {
+
+//     // this is it. no mor adjusting necessary
+//     ROTEL_IS_ADJUSTING_VALUE.store(false, Ordering::Relaxed);
+//     println!("    Done.");
+
+// } else {
+
+
+//     if rotel_volume_sent == rotel_volume_target {
+
+//         // no more updates needed.
+//         println!("    Waiting for confirmation: sent: {} received: {} target: {}", rotel_volume_sent, rotel_volume_received, rotel_volume_target);
+//         let rotel_command = format!("volume_{}!", rotel_volume_sent);
+//         println!("    Send2: {}", rotel_command);
+//         if let Err(e) = port.write_all(&rotel_command.as_bytes()) {
+//             println!("    Send2: Error ({:?})", e);
+//         }
+
+//     } else {
+
+//         rotel_volume_sent = rotel_volume_sent + (rotel_volume_target-rotel_volume_sent).signum();
+//         let rotel_command = format!("volume_{}!", rotel_volume_sent);
+//         println!("    Send1: {}", rotel_command);
+//         // set on rotel device
+//         if let Err(e) = port.write_all(&rotel_command.as_bytes()) {
+//             println!("    Send1: Error ({:?})", e);
+//         }
+
+//     }
+// }
+
+
+
+// }
+
+
+
+
+// if rotel_is_adjusting() {
+//     if rotel_volume_received == rotel_volume_target {
+
+//         // this is it. no mor adjusting necessary
+//         ROTEL_IS_ADJUSTING_VALUE.store(false, Ordering::Relaxed);
+//         println!("    Done.");
+
+//     } else {
+
+
+//         if rotel_volume_sent == rotel_volume_target {
+
+//             // no more updates needed.
+//             println!("    Waiting for confirmation: sent: {} received: {} target: {}", rotel_volume_sent, rotel_volume_received, rotel_volume_target);
+//             let rotel_command = format!("volume_{}!", rotel_volume_sent);
+//             println!("    Send2: {}", rotel_command);
+//             if let Err(e) = port.write_all(&rotel_command.as_bytes()) {
+//                 println!("    Send2: Error ({:?})", e);
+//             }
+
+//         } else {
+
+//             rotel_volume_sent = rotel_volume_sent + (rotel_volume_target-rotel_volume_sent).signum();
+//             let rotel_command = format!("volume_{}!", rotel_volume_sent);
+//             println!("    Send1: {}", rotel_command);
+//             // set on rotel device
+//             if let Err(e) = port.write_all(&rotel_command.as_bytes()) {
+//                 println!("    Send1: Error ({:?})", e);
+//             }
+
+//         }
+
+
+
+//     }
+// }
+
+// thread::sleep(Duration::from_millis(30));
+
+// }
 

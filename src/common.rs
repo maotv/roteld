@@ -4,6 +4,7 @@ extern crate ws;
 // use ws::{Handler, Handshake, Result, Message};
 use serde_json::Value;
 
+#[derive(Debug)]
 pub struct KeyValueRaw {
     pub key:  String,
     pub value: String,
@@ -14,7 +15,7 @@ pub struct KeyValueRaw {
 
 pub enum Event {
 
-    RotelMessage(KeyValueRaw),
+    // RotelMessage(KeyValueRaw),
     RotelNormVolume(f64),
     VolumioState(Value),
     SerialData(String),
