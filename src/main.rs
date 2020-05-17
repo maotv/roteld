@@ -64,12 +64,19 @@ fn main() {
 
 
     let (tx_event, rx_event) = mpsc::channel();
-    let (tx_rotel, rx_rotel) = mpsc::channel();
+    // let (tx_rotel, rx_rotel) = mpsc::channel();
 
-    let to_rotel = amp.start(tx_event.clone(), rx_rotel);
+    let to_rotel = amp.start(tx_event.clone());
 
     let mut volumio_sender: Option<ws::Sender> = None;
     let mut volumio_current_volume = 0;
+
+    thread::spawn(move || {
+        Volumio::connect(&setup.volumio_url, tx_event);
+    });
+
+
+
 
     loop {
 

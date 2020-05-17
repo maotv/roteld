@@ -213,7 +213,7 @@ impl RotelDevice {
 
  
     
-    pub fn start(&mut self, tx: Sender<Event>, rx: Receiver<RotelEvent>) -> Sender<RotelEvent> {
+    pub fn start(&mut self, tx: Sender<Event>) -> Sender<RotelEvent> {
 
         let port = match &self.tty {
             Some(p) => p.as_raw_fd(),
