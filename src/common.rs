@@ -19,7 +19,9 @@ pub enum Event {
     RotelNormVolume(f64),
     VolumioNormVolume(f64),
 
-    VolumioState(Value),
+
+
+//     VolumioState(Value),
     SerialData(String),
     SocketSerialBroadcaster(ws::Sender),
     VolumioConnect(crate::volumio::Volumio),

@@ -23,22 +23,75 @@ const VOLUMIO_VOLUME_MIN: i64 = 0;
 const VOLUMIO_VOLUME_MAX: i64 = 100;
 
 
+pub enum VolumioEvent {
+    Connect(ws::Sender),
+    PushState(Value),
+    SendPing,
+    Pong,
+    VolumeTarget(f64),
+}
+
+
 #[derive(Clone)]
 pub struct Volumio {
-    sender: ws::Sender
+    url: String,
+    to_main: mpsc::Sender<Event>,
+    to_self: mpsc::Sender<VolumioEvent>,
 }
 
 
 impl Volumio {
 
-    pub fn connect(url: &str, tx: mpsc::Sender<Event>) {
+    pub fn new(url: &str, to_main: mpsc::Sender<Event>) -> Self {
+
+        let (dummy_tx, dummy_rx) = mpsc::channel();
+
+        Volumio {
+           url: String::from(url),
+           to_main: to_main,
+           to_self: dummy_tx
+        }
+    }
+
+    pub fn connect(&mut self) -> mpsc::Sender<VolumioEvent> {
+
+        let (vol_tx, vol_rx) = mpsc::channel();
+        self.to_self = vol_tx.clone();
+
+        thread::spawn(move || {
+            volumio_event_thread(vol_rx)
+        });
+
+        let vol_tx_clone = vol_tx.clone();
+        thread::spawn(move || {
+            loop {
+                thread::sleep(Duration::from_millis(23000));
+                vol_tx_clone.send(VolumioEvent::SendPing);
+            }
+        });
+    
+
+
+        let vol_tx_clone = vol_tx.clone();
+        let url_clone = self.url.clone();
+        thread::spawn(move || {
+            Volumio::xconnect(&url_clone, vol_tx_clone);
+        });
+
+        vol_tx
+    }
+
+    pub fn xconnect(url: &str, tx: mpsc::Sender<VolumioEvent>) {
 
  
         loop {
 
             println!("[Setup  ] Client Connect to Volumio Websocket");
-            ws::connect( url /*"ws://192.168.178.53:3000/socket.io/?EIO=3&transport=websocket"*/, 
-                |out| VolumioCore::new(out,tx.clone())).unwrap();
+            if let Err(e) =  ws::connect( url /*"ws://192.168.178.53:3000/socket.io/?EIO=3&transport=websocket"*/, 
+                |out| VolumioCore::new(out,tx.clone())) {
+                    warn!("cannot connect to volumio ws {:?}", e);
+                    thread::sleep(Duration::from_millis(1000));
+            }
 //            ws::connect("ws://127.0.0.1:3000/socket.io/?EIO=3&transport=websocket", |out| Volumio { out: out, tx: tx.clone() } ).unwrap();
             println!("[Setup  ] Client Connection closed");
             thread::sleep(Duration::from_millis(3000));
@@ -48,36 +101,71 @@ impl Volumio {
     }
 
     pub fn send_norm_volume(&self, vol: f64) {
-
-        let dvol = device_volume(VOLUMIO_VOLUME_MIN, VOLUMIO_VOLUME_MAX, vol);
-        info!("send volume to volumio {}", dvol);
-        self.sender.send(format!("429[\"volume\", {}]", dvol));
-    }
-
-    pub fn send_ping(&self) {
-        self.sender.send("2");
+        self.to_self.send(VolumioEvent::VolumeTarget(vol));        
     }
 
 }
+
+
+fn volumio_event_thread(vol_rx: mpsc::Receiver<VolumioEvent>) {
+
+    let mut to_sock: Option<ws::Sender> = None;
+
+    loop {
+
+        match vol_rx.recv() {
+
+            Ok(VolumioEvent::Connect(s)) => {
+                to_sock = Some(s);
+            },
+
+            Ok(VolumioEvent::VolumeTarget(v)) => {
+
+
+                // let dvol = device_volume(VOLUMIO_VOLUME_MIN, VOLUMIO_VOLUME_MAX, vol);
+                // info!("send volume to volumio {}", dvol);
+                
+                // if let Some(s) = self.to_sock {
+                //     s.send(format!("429[\"volume\", {}]", dvol));
+                // }
+
+                ()
+            },
+
+            Ok(VolumioEvent::SendPing) => {
+                to_sock = to_sock.map(|s| { s.send("2"); s })
+            },
+
+            _ => ()
+
+
+        }
+
+
+
+    }
+}
+
+
 
 
 // Our Handler struct.
 // Here we explicity indicate that the Client needs a Sender,
 // whereas a closure captures the Sender for us automatically.
 pub struct VolumioCore {
-    out: ws::Sender,
-    to_main:  mpsc::Sender<Event>,
 
-    current_volume: i64,
+    out:     ws::Sender,
+    to_vol:  mpsc::Sender<VolumioEvent>,
+
+//     current_volume: i64,
 }
 
 impl VolumioCore {
 
-    pub fn new(out: ws::Sender, tx: mpsc::Sender<Event>) -> Self {
+    pub fn new(out: ws::Sender, tx: mpsc::Sender<VolumioEvent>) -> Self {
         VolumioCore {
             out: out,
-            to_main: tx,
-            current_volume: 0
+            to_vol: tx,
         }
     }
 
@@ -87,23 +175,23 @@ impl VolumioCore {
 
 
 
-    fn handle_push_state(&mut self, state: Value) {
+//     fn handle_push_state(&mut self, state: Value) {
 
-        let ps_volume: i64 = state["volume"].as_i64().unwrap();
+//         let ps_volume: i64 = state["volume"].as_i64().unwrap();
 
-        if ps_volume != self.current_volume {
+//         if ps_volume != self.current_volume {
 
-            self.current_volume = ps_volume;
-            let vnorm = crate::common::normal_volume(VOLUMIO_VOLUME_MIN, VOLUMIO_VOLUME_MAX, ps_volume);
-            self.to_main.send(Event::VolumioNormVolume(vnorm));
-//            check(to_rotel.send(RotelEvent::VolumeTarget(vnorm)));
+//             self.current_volume = ps_volume;
+//             let vnorm = crate::common::normal_volume(VOLUMIO_VOLUME_MIN, VOLUMIO_VOLUME_MAX, ps_volume);
+//             self.to_main.send(Event::VolumioNormVolume(vnorm));
+// //            check(to_rotel.send(RotelEvent::VolumeTarget(vnorm)));
 
-        } else {
-            println!("[Main   ] Volumio Event, Volume unchanged ({})", ps_volume);
-        }
+//         } else {
+//             println!("[Main   ] Volumio Event, Volume unchanged ({})", ps_volume);
+//         }
 
 
-    }
+//     }
 
 
     // pub fn sender(self) -> Option<ws::Sender> {
@@ -130,7 +218,7 @@ impl Handler for VolumioCore {
         // If this call fails, it will only result in this connection disconnecting.
         println!("Volumio Open, send probe...");
         self.out.send("2probe").unwrap();
-        self.to_main.send(Event::VolumioConnect( Volumio { sender: self.out.clone() } )).unwrap();
+        self.to_vol.send(VolumioEvent::Connect( self.out.clone() )).unwrap();
         Ok(())
     }
 
@@ -149,19 +237,22 @@ impl Handler for VolumioCore {
             let mut state: Value = serde_json::from_str(&jstr[2..]).unwrap();
 
             if state[0] == "pushState" {
-                // println!("Got 42: {}", jstr);
                 let vstate: Value = state.as_array_mut().unwrap().remove(1);
-                self.handle_push_state(vstate);
+                self.to_vol.send(VolumioEvent::PushState(vstate));
+                // println!("Got 42: {}", jstr);
+                // 
+                // self.handle_push_state(vstate);
 //                self.tx.send(Event::VolumioState(vstate)).expect("cannot send volumio state");
 
 //                let vstate: VolumioState = serde_json::from_value(state.as_array_mut().unwrap().remove(1)).unwrap();
 //                self.tx.send(Event::Volumio(vstate));
             } 
 
-        } 
-        // else if jstr == "3" {
-        //     println!("[Volumio] got pong");
-        // }
+        }  else if jstr == "3" {
+            println!("[Volumio] got pong");
+            self.to_vol.send(VolumioEvent::Pong);
+
+        }
         
         Ok(())
 

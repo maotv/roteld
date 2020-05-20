@@ -14,6 +14,7 @@ use log::{info,debug,warn,error};
 
 mod common;
 // mod rwc; // rotel-web-client
+mod twinkly;
 mod volumio;
 mod rotel;
 
@@ -58,30 +59,22 @@ fn main() {
 
 
     let mut amp = RotelDevice::new(&setup.rotel_serial);
-
-
     let (tx_event, rx_event) = mpsc::channel();
-    // let (tx_rotel, rx_rotel) = mpsc::channel();
-
     let to_rotel = amp.start(tx_event.clone());
 
-    let mut volumio: Option<Volumio> = None;
+ 
+    let mut volumio = Volumio::new(&setup.volumio_url, tx_event.clone());
+    let to_volumio = volumio.connect();
+
 
     let mut volumio_current_volume = 0;
 
-    let tx_event_clone = tx_event.clone();
-    thread::spawn(move || {
-        Volumio::connect(&setup.volumio_url, tx_event_clone);
-    });
+    // let tx_event_clone = tx_event.clone();
+    // thread::spawn(move || {
+    //     Volumio::connect(&setup.volumio_url, tx_event_clone);
+    // });
 
-    let tx_event_clone = tx_event.clone();
-    thread::spawn(move || {
-        loop {
-            thread::sleep(Duration::from_millis(23000));
-            check(tx_event_clone.send(Event::VolumioPing));
-        }
-    });
-
+    twinkly::Twinkly::new("").start();
 
     loop {
 
@@ -111,36 +104,9 @@ fn main() {
             },
 
             Ok(Event::RotelNormVolume(v)) => {
-
-                volumio = volumio.map( |out| {
-                    out.send_norm_volume(v);
-                    out
-                });
-
-                // if let Some(vxol) = volumio {
-                //     vxol.send_norm_volume(v)
-                // }
-
-                // volumio_current_volume = common::device_volume(VOLUMIO_VOLUME_MIN, VOLUMIO_VOLUME_MAX, v);
-                // volumio_sender = volumio_sender.map( |out| {
-                //     check(out.send(format!("429[\"volume\", {}]", volumio_current_volume)));
-                //     out
-                // });
-
+                volumio.send_norm_volume(v)
             },
 
-            Ok(Event::VolumioConnect(snd)) => {
-
-                volumio = Some(snd);
-            },
-
-            Ok(Event::VolumioPing) => {
-                volumio = volumio.map( |out| {
-                    println!("[Volumio] send ping");
-                    out.send_ping();
-                    out
-                });
-            },
 
             Err(..) => {
                 println!("Something wrong");
