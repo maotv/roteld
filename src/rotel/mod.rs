@@ -40,8 +40,8 @@ use std::path::Path;
 // use argparse::{ArgumentParser, Store};
 // use serialport::prelude::*;
 
-use std::os::unix::io::RawFd;
-use std::os::unix::prelude::*;
+// use std::os::unix::io::RawFd;
+// use std::os::unix::prelude::*;
 
 // use std::path::Path;
 use serialport::prelude::*;
@@ -213,6 +213,9 @@ impl RotelDevice {
     
     pub fn start(&mut self, tx: Sender<Event>) -> Sender<RotelEvent> {
 
+        // workaround for rust-analyzer #6038
+        use std::os::unix::io::AsRawFd;
+
         let port = match &self.tty {
             Some(p) => p.as_raw_fd(),
             None => 0
@@ -264,8 +267,9 @@ fn write_command(port: &mut TTYPort, cmd: &str) {
 }
 
 
-pub fn rotel_main_thread(fd: RawFd, tx: Sender<Event>, rx: Receiver<RotelEvent>, to_smooth: Sender<SmoothVolume>) -> () {
+pub fn rotel_main_thread(fd: std::os::unix::io::RawFd, tx: Sender<Event>, rx: Receiver<RotelEvent>, to_smooth: Sender<SmoothVolume>) -> () {
 
+    
     println!("rotel_command_thread with fd {}", fd);
 
     let mut state = RotelState::new();
@@ -286,7 +290,9 @@ pub fn rotel_main_thread(fd: RawFd, tx: Sender<Event>, rx: Receiver<RotelEvent>,
 
 
     let mut port: TTYPort = unsafe {  
-         TTYPort::from_raw_fd(fd)
+        // workaround for rust-analyzer #6038
+        use std::os::unix::io::FromRawFd;
+        TTYPort::from_raw_fd(fd)
     };
 
 

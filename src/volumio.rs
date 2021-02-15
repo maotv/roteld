@@ -5,7 +5,7 @@ extern crate ws;
 use ws::{Handler, Handshake, Result, Message};
 use ws::Error as WsError;
 
-use log::{trace,info,warn,error};
+use log::{warn};
 
 
 use serde_json::Value;
@@ -44,7 +44,7 @@ impl Volumio {
 
     pub fn new(url: &str, to_main: mpsc::Sender<Event>) -> Self {
 
-        let (dummy_tx, dummy_rx) = mpsc::channel();
+        let (dummy_tx, _dummy_rx) = mpsc::channel();
 
         Volumio {
            url: String::from(url),
