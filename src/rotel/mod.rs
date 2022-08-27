@@ -17,6 +17,7 @@ use log::{trace,info,warn,error};
 // use ws::{Handler, Handshake, Result, Message};
 // use ws::Error as WsError;
 
+use std::net::{UdpSocket, SocketAddr};
 // use serde_json::Value;
 use std::sync::mpsc;
 
@@ -44,8 +45,8 @@ use std::path::Path;
 // use std::os::unix::prelude::*;
 
 // use std::path::Path;
-use serialport::prelude::*;
-use serialport::posix::TTYPort;
+use serialport::{SerialPortBuilder, StopBits, DataBits, FlowControl, Parity};
+use serialport::TTYPort;
 
 
 use crate::common::*;
@@ -186,29 +187,27 @@ impl RotelDevice {
 
         let port_name = String::from(serial); "/dev/ttyUSB0";
 
-        let settings = SerialPortSettings {
+        // let settings = SerialPortSettings {
 
-            baud_rate: 115200, // BaudRate::Baud115200,
-            data_bits: DataBits::Eight,
-            flow_control: FlowControl::None,
-            parity: Parity::None,
-            stop_bits: StopBits::One,
-            timeout: Duration::from_millis(1),
+        //     baud_rate: 115200, // BaudRate::Baud115200,
+        //     data_bits: DataBits::Eight,
+        //     flow_control: FlowControl::None,
+        //     parity: Parity::None,
+        //     stop_bits: StopBits::One,
+        //     timeout: Duration::from_millis(1),
+        // };
 
-        };
+        let spb = serialport::new(port_name,115200)
+            .data_bits(DataBits::Eight)
+            .flow_control(FlowControl::None)
+            .parity(Parity::None)
+            .stop_bits(StopBits::One)
+            .timeout(Duration::from_millis(1));
 
-
-        let optty = TTYPort::open(Path::new(&port_name), &settings).ok();
+        let optty = TTYPort::open(&spb).ok();
         RotelDevice { tty: optty }
         
     }
-
-
-    // pub fn check(&self) {
-    //     let port = self.tty.as_raw_fd();
-    //     println!("port check! #{}", port);
-    // }
-
  
     
     pub fn start(&mut self, tx: Sender<Event>) -> Sender<RotelEvent> {
@@ -287,6 +286,15 @@ pub fn rotel_main_thread(fd: std::os::unix::io::RawFd, tx: Sender<Event>, rx: Re
             thread::sleep(Duration::from_millis(100));
         }
     }
+
+
+    let sock = UdpSocket::bind(
+        SocketAddr::new(
+            "0.0.0.0".parse().expect("what should go wrong?"), 
+            2102));
+
+
+
 
 
     let mut port: TTYPort = unsafe {  
@@ -476,90 +484,4 @@ pub fn rotel_smooth_volume_thread(tx: Sender<RotelEvent>, rx: Receiver<SmoothVol
 }
 
 
-
-
-
-
-
-
-
-// if rotel_volume_received == rotel_volume_target {
-
-//     // this is it. no mor adjusting necessary
-//     ROTEL_IS_ADJUSTING_VALUE.store(false, Ordering::Relaxed);
-//     println!("    Done.");
-
-// } else {
-
-
-//     if rotel_volume_sent == rotel_volume_target {
-
-//         // no more updates needed.
-//         println!("    Waiting for confirmation: sent: {} received: {} target: {}", rotel_volume_sent, rotel_volume_received, rotel_volume_target);
-//         let rotel_command = format!("volume_{}!", rotel_volume_sent);
-//         println!("    Send2: {}", rotel_command);
-//         if let Err(e) = port.write_all(&rotel_command.as_bytes()) {
-//             println!("    Send2: Error ({:?})", e);
-//         }
-
-//     } else {
-
-//         rotel_volume_sent = rotel_volume_sent + (rotel_volume_target-rotel_volume_sent).signum();
-//         let rotel_command = format!("volume_{}!", rotel_volume_sent);
-//         println!("    Send1: {}", rotel_command);
-//         // set on rotel device
-//         if let Err(e) = port.write_all(&rotel_command.as_bytes()) {
-//             println!("    Send1: Error ({:?})", e);
-//         }
-
-//     }
-// }
-
-
-
-// }
-
-
-
-
-// if rotel_is_adjusting() {
-//     if rotel_volume_received == rotel_volume_target {
-
-//         // this is it. no mor adjusting necessary
-//         ROTEL_IS_ADJUSTING_VALUE.store(false, Ordering::Relaxed);
-//         println!("    Done.");
-
-//     } else {
-
-
-//         if rotel_volume_sent == rotel_volume_target {
-
-//             // no more updates needed.
-//             println!("    Waiting for confirmation: sent: {} received: {} target: {}", rotel_volume_sent, rotel_volume_received, rotel_volume_target);
-//             let rotel_command = format!("volume_{}!", rotel_volume_sent);
-//             println!("    Send2: {}", rotel_command);
-//             if let Err(e) = port.write_all(&rotel_command.as_bytes()) {
-//                 println!("    Send2: Error ({:?})", e);
-//             }
-
-//         } else {
-
-//             rotel_volume_sent = rotel_volume_sent + (rotel_volume_target-rotel_volume_sent).signum();
-//             let rotel_command = format!("volume_{}!", rotel_volume_sent);
-//             println!("    Send1: {}", rotel_command);
-//             // set on rotel device
-//             if let Err(e) = port.write_all(&rotel_command.as_bytes()) {
-//                 println!("    Send1: Error ({:?})", e);
-//             }
-
-//         }
-
-
-
-//     }
-// }
-
-// thread::sleep(Duration::from_millis(30));
-
-// }
 

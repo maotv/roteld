@@ -28,12 +28,7 @@ use std::path::Path;
 use std::os::unix::io::RawFd;
 use std::os::unix::prelude::*;
 
-// use std::path::Path;
-use serialport::prelude::*;
-use serialport::posix::TTYPort;
-
-
-use crate::common::Event;
+use serialport::TTYPort;
 use crate::common::KeyValueRaw;
 
 use super::RotelEvent;

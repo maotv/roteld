@@ -17,6 +17,7 @@ pub enum Event {
 
     // RotelMessage(KeyValueRaw),
     RotelNormVolume(f64),
+    UdpTargetVolume(usize),
     VolumioNormVolume(f64),
 
 

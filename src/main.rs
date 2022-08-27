@@ -6,7 +6,10 @@ extern crate serialport;
 extern crate ws;
 extern crate serde_json;
 
+use std::net::SocketAddr;
+use std::net::UdpSocket;
 use std::sync::mpsc;
+use std::sync::mpsc::Sender;
 use std::thread;
 use std::time::Duration;
 
@@ -76,6 +79,18 @@ fn main() {
 
     // twinkly::Twinkly::new("").start();
 
+    let tx_clone = tx_event.clone();
+    thread::spawn(move || {
+        loop {
+            if let Err(e) = udp_receiver(tx_clone.clone()) {
+                warn!("UDP Thread exited with {:?}", e)
+            }
+            thread::sleep(Duration::from_millis(1000));
+        }
+    });
+
+
+
     loop {
 
         println!("[Loop   ] --------------- Main Event Loop -------------");
@@ -83,21 +98,9 @@ fn main() {
 
         match rx_event.recv() {
 
-            // Ok(Event::VolumioState(ps)) => {
-                    
-            //     let ps_volume: i64 = ps["volume"].as_i64().unwrap();
-
-            //     if ps_volume != volumio_current_volume {
-
-            //         volumio_current_volume = ps_volume;
-            //         let vnorm = common::normal_volume(VOLUMIO_VOLUME_MIN, VOLUMIO_VOLUME_MAX, volumio_current_volume);
-            //         check(to_rotel.send(RotelEvent::VolumeTarget(vnorm)));
-
-            //     } else {
-            //         println!("[Main   ] Volumio Event, Volume unchanged ({})", ps_volume);
-            //     }
-
-            // }, 
+            Ok(Event::UdpTargetVolume(v)) => {
+                to_rotel.send(RotelEvent::VolumeTarget((v as f64) / 100.0));
+            },
 
             Ok(Event::VolumioNormVolume(v)) => {
                 to_rotel.send(RotelEvent::VolumeTarget(v));
@@ -122,157 +125,6 @@ fn main() {
 
 }
 
-//     let (tx_event, rx_event) = mpsc::channel();
-   
-
-
-//     let txc = tx_event.clone();
-//     let to_rotel = amp.start(txc, rx_command);
-
-
-//         let txc = tx_event.clone();
-
-// //        thread::spawn(move || {
-// //            Volumio::connect(&setup.volumio_url /*"ws://127.0.0.1:3000/socket.io/?EIO=3&transport=websocket"*/, txc);
-// //        });
-
-//         let txc = tx_event.clone();
-// //        thread::spawn(move || {
-// //            SocketSerial::listen("0.0.0.0:8989", txc);
-// //        });
-
-
-//         let txc = tx_event.clone();
-// //        thread::spawn(move || {
-// //            loop {
-// //                thread::sleep(Duration::from_millis(23000));
-// //                check(txc.send(Event::VolumioPing));
-// //            }
-// //        });
-
-
-
-//         let mut volumio_current_volume: i64 = 0;
-
-//         let mut volumio_sender: Option<ws::Sender> = None;
-
-//         let mut rwc_out: Option<ws::Sender> = None;
-
-
-//         // ===================================================================
-//         //
-//         //     Main Event Loop
-//         //
-//         // ===================================================================
-//         loop {
-
-//             println!("[Loop   ] --------------- Main Event Loop -------------");
-//             // amp.check();
-
-//             match rx_event.recv() {
-
-//                 Ok(Event::RotelMessage(ur)) => {
-//                     // println!("[Main   ] Rotel Event: {}", ur.name );
-
-//                     rwc_out = rwc_out.map( |out| {
-//                         println!("[Rotel] pass serial message to rwc");
-//                         if ur.key == "display" {
-//                             check(out.send(format!("{} \"D\": \"{}\" {}","{", &ur.raw[..20], "}")));
-//                             check(out.send(format!("{} \"D\": \"{}\" {}","{", &ur.raw[20..], "}")));
-//                         } else {
-//                             check(out.send(format!("{} \"D\": \"{}\" {}","{", ur.raw, "}")));
-//                         }
-//                         out
-//                     });
-
-
-//                     if ur.key == "volume" {
-
-//                     } else {
-//                         println!("[Main   ] Rotel Event: Other {} = {}", ur.key, ur.value);
-//                     }
-
-//                 }, 
-
-//                 Ok(Event::RotelNormVolume(v)) => {
-
-//                     volumio_current_volume = common::device_volume(VOLUMIO_VOLUME_MIN, VOLUMIO_VOLUME_MAX, v);
-//                     volumio_sender = volumio_sender.map( |out| {
-//                         check(out.send(format!("429[\"volume\", {}]", volumio_current_volume)));
-//                         out
-//                     });
-
-//                 },
-
-
-//                 Ok(Event::VolumioState(ps)) => {
-                    
-//                     let ps_volume: i64 = ps["volume"].as_i64().unwrap();
-
-//                     if ps_volume != volumio_current_volume {
-
-//                         volumio_current_volume = ps_volume;
-
-//                         if rotel::rotel_knob_is_turning() { // n second timeout when directly setting rotel volume
-//                             println!("[Main   ] (ign.) Volumio Event, Volume is {} (was: {})", ps_volume, volumio_current_volume);
-//                         } else {
-//                             println!("[Main   ] (set.) Volumio Event, Volume is {} (was: {})", ps_volume, volumio_current_volume);
-//                             let vnorm = common::normal_volume(VOLUMIO_VOLUME_MIN, VOLUMIO_VOLUME_MAX, volumio_current_volume);
-//                             check(tx_command.send(RotelEvent::VolumeTarget(vnorm)));
-//                         }
-
-
-//                     } else {
-//                         println!("[Main   ] Volumio Event, Volume unchanged ({})", ps_volume);
-//                     }
-
-//                 }, 
-
-//                 Ok(Event::SerialData(msg)) => {
-//                     println!("[Main   ] Serial Event ({})", msg);
-//                     check(tx_command.send(RotelEvent::Command(msg)));
-//                 },
-
-//                 Ok(Event::SocketSerialBroadcaster(snd)) => {
-//                     println!("[Main   ] Got Broadcaster");
-//                     rwc_out = Some(snd);
-//                 },
-
-
-
-//                 Ok(Event::VolumioConnect(snd)) => {
-
-//                     volumio_sender = Some(snd);
-//                 },
-
-//                 Ok(Event::VolumioPing) => {
-//                     volumio_sender = volumio_sender.map( |out| {
-//                         println!("[Volumio] send ping");
-//                         check(out.send("2"));
-//                         out
-//                     });
-//                 },
-
-//                 Err(..) => {
-//                     println!("Something wrong");
-//                 }
-
-//             }
-
-
-
-            
-
-//         }
-
-
-        
-//     //}
-
-
-
-// }
-
 fn check<T>(res: Result<(), T>) 
     where T: std::fmt::Debug
 {
@@ -285,8 +137,64 @@ fn check<T>(res: Result<(), T>)
 }
 
 
+pub fn test_serde() {
+    let j = serde_json::to_string(&NetworkMessage::Volume(42)).unwrap();
+    info!("{}", j);
+}
 
 
+#[derive(Serialize,Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NetworkMessage {
+    Volume(usize),
+    Power(bool),
+    Source(usize),
+    Error(String)
+    // volume: Option<usize>,
+    // power: Option<bool>,
+    // source: Option<usize>,
+}
+
+fn udp_receiver(tx: Sender<Event>) -> std::io::Result<()> {
+
+
+    let sock = UdpSocket::bind(
+        SocketAddr::new(
+            "0.0.0.0".parse().expect("what should go wrong?"), 
+            2101))?;
+
+    let mut buf = [0; 1024];
+
+    debug!("udp_resolver");
+
+    loop {
+
+        let (len, addr) = sock.recv_from(&mut buf)?;
+        let raw = String::from_utf8_lossy(&buf[0..len]);
+        let incoming = raw.trim();
+
+        println!("{:?} bytes received from {:?}: |{}|", len, addr, incoming);
+
+        if incoming.starts_with("roteld {") {
+
+            let nm = serde_json::from_str::<NetworkMessage>(&incoming[7..])
+                .unwrap_or_else(|e| NetworkMessage::Error(format!("{}", e)));
+
+            match nm {
+                NetworkMessage::Volume(n) => {
+                    tx.send(Event::UdpTargetVolume(n));
+                },
+                NetworkMessage::Power(_) => (),
+                NetworkMessage::Source(_) => (),
+                NetworkMessage::Error(e) => {
+                    error!("NetworkMessage Error: {}", e)
+                },
+            }
+        }
+
+    }
+
+}
 
 
 
