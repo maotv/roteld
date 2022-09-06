@@ -99,7 +99,7 @@ fn main() {
         match rx_event.recv() {
 
             Ok(Event::UdpTargetVolume(v)) => {
-                to_rotel.send(RotelEvent::VolumeTarget((v as f64) / 100.0));
+                to_rotel.send(RotelEvent::VolumeTarget(f64::min((v as f64) / 100.0, 100.0)));
             },
 
             Ok(Event::VolumioNormVolume(v)) => {

@@ -13,7 +13,8 @@ extern crate serde_json;
 // mod rwc;
 mod protocol;
 
-use log::{trace,info,warn,error};
+use log::{trace,info,warn,error, debug};
+use serde_json::json;
 // use ws::{Handler, Handshake, Result, Message};
 // use ws::Error as WsError;
 
@@ -266,6 +267,15 @@ fn write_command(port: &mut TTYPort, cmd: &str) {
 }
 
 
+#[derive(Serialize,Deserialize)]
+pub struct VolumeBroadcast {
+    device: usize,
+    volume: usize
+}
+
+
+
+
 pub fn rotel_main_thread(fd: std::os::unix::io::RawFd, tx: Sender<Event>, rx: Receiver<RotelEvent>, to_smooth: Sender<SmoothVolume>) -> () {
 
     
@@ -288,12 +298,18 @@ pub fn rotel_main_thread(fd: std::os::unix::io::RawFd, tx: Sender<Event>, rx: Re
     }
 
 
-    let sock = UdpSocket::bind(
+    let mut sock = UdpSocket::bind(
         SocketAddr::new(
             "0.0.0.0".parse().expect("what should go wrong?"), 
             2102));
 
 
+    if let Ok(s) = &mut sock {
+        s.set_broadcast(true);
+        s.connect( SocketAddr::new(
+            "255.255.255.255".parse().expect("what should go wrong?"), 
+            2100));
+    }
 
 
 
@@ -302,7 +318,6 @@ pub fn rotel_main_thread(fd: std::os::unix::io::RawFd, tx: Sender<Event>, rx: Re
         use std::os::unix::io::FromRawFd;
         TTYPort::from_raw_fd(fd)
     };
-
 
 
 
@@ -368,6 +383,20 @@ pub fn rotel_main_thread(fd: std::os::unix::io::RawFd, tx: Sender<Event>, rx: Re
                         state.device_volume = rotvol;
                         // println!("[Rotel  ] Rotel Volume {}", rotvol);
                         // check(tx_command.send(RotelEvent::Received(rotvol)));
+
+                        if let Ok(udp) = &sock {
+                            debug!("dend to udp...");
+                            let vb = serde_json::to_vec(&json!(
+                                {
+                                    "device": 1,
+                                    "volume": rotvol
+                                }
+                            ));
+                            if let Ok(buf) = vb {
+                                udp.send(&buf);
+                            }
+                        }
+
 
                         if state.is_adjusting {
                             to_smooth.send(SmoothVolume::Current(rotvol));
