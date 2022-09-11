@@ -110,7 +110,7 @@ pub fn rotel_reader_thread(fd: RawFd, tx: Sender<RotelEvent>) -> () {
                 if let ParserState::DONE = ures.state {
                     println!("[Rotel  ] Message: [{}] = \"{}\"", ures.name, ures.value);
                     if ures.name.len() > 1 {
-                        tx.send(RotelEvent::Response( KeyValueRaw { key: ures.name, value: ures.value, raw: ures.raw } )).unwrap();
+                        tx.send(RotelEvent::AmpMessage( KeyValueRaw { key: ures.name, value: ures.value, raw: ures.raw } )).unwrap();
                     } else {
                         debug!("[Rotel  ] Ignoring message due to insufficient length");
                     }

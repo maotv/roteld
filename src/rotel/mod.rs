@@ -86,7 +86,7 @@ pub enum RotelEvent {
     VolumeTarget(f64),     // from volumio, this is the target volume level
     VolumeAdjustmentRequest(i64), // from smmoth volume thread, forward to the amp
     VolumeAdjustmentDone,
-    Response(KeyValueRaw), // from the amp
+    AmpMessage(KeyValueRaw), // from the amp
     Command(String),
 
     // Target(i64),
@@ -372,7 +372,7 @@ pub fn rotel_main_thread(fd: std::os::unix::io::RawFd, tx: Sender<Event>, rx: Re
 
 
             // response/message from amplifier
-            Ok(RotelEvent::Response(p)) => {
+            Ok(RotelEvent::AmpMessage(p)) => {
 
                 match p.key.as_str() {
                     "display" => (),
@@ -385,14 +385,15 @@ pub fn rotel_main_thread(fd: std::os::unix::io::RawFd, tx: Sender<Event>, rx: Re
                         // check(tx_command.send(RotelEvent::Received(rotvol)));
 
                         if let Ok(udp) = &sock {
-                            debug!("dend to udp...");
-                            let vb = serde_json::to_vec(&json!(
+                            debug!("send to udp...");
+                            let mut vb = serde_json::to_vec(&json!(
                                 {
                                     "device": 1,
                                     "volume": rotvol
                                 }
                             ));
-                            if let Ok(buf) = vb {
+                            if let Ok(buf) = &mut vb {
+                                buf.push(0);
                                 udp.send(&buf);
                             }
                         }
